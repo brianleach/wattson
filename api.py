@@ -3,18 +3,30 @@
 Run alongside the dashboard (see docker-compose.yml). The dashboard itself
 is static HTML; this small Flask app only exists so users can record what
 they paid per kWh at public DC fast chargers, which feeds the fuel-savings
-math on the next dashboard regeneration.
+math on the next dashboard regeneration. When WATTSON_DASHBOARD_TOKEN is
+set it also serves the login page and the check nginx runs before every
+dashboard request (see dashboard_auth.py).
 """
 import os
 from flask import Flask, request, redirect, jsonify
 import sqlite3
 import math
+import time
 
 from config import DB_PATH
+from dashboard_auth import (SESSION_COOKIE, DashboardAuth, client_ip, is_https,
+                            token_from_env)
 
 app = Flask(__name__)
 
 WATTSON_API_HOST = os.environ.get("WATTSON_API_HOST", "127.0.0.1")
+
+auth = DashboardAuth(token_from_env(), time.time)
+
+LOGIN_ERRORS = {
+    "bad": "Wrong password.",
+    "throttled": "Too many failed attempts. Try again in a few minutes.",
+}
 
 
 def _err_page(msg, code):
@@ -83,6 +95,68 @@ def set_charge_cost_form():
     except Exception:
         app.logger.exception("Dashboard regeneration failed")
     return redirect("/#charging", code=303)
+
+
+def _login_page(error, code):
+    message = LOGIN_ERRORS.get(error)
+    err = f'<p style="color:#ff6b6b">{message}</p>' if message else ""
+    return (
+        '<html><head><meta name="viewport" content="width=device-width,'
+        ' initial-scale=1"><title>Wattson login</title></head>'
+        '<body style="background:#0b0d10;color:#fff;font-family:sans-serif;'
+        'padding:40px;max-width:320px;margin:0 auto">'
+        '<form method="post" action="/login"'
+        ' style="display:flex;flex-direction:column;gap:12px">'
+        '<h1 style="margin:0">Wattson</h1>'
+        '<p style="margin:0;color:#9aa0a6">This dashboard is private.</p>'
+        f"{err}"
+        '<input type="password" name="password" placeholder="password"'
+        ' autocomplete="current-password" autofocus'
+        ' style="font-size:15px;padding:10px 12px;border:1px solid #2a2f36;'
+        'border-radius:4px;background:#14181d;color:#fff">'
+        '<button type="submit" style="font-size:15px;padding:10px;border:0;'
+        'border-radius:4px;background:#7ed321;color:#0b0d10;'
+        'font-weight:600">Sign in</button>'
+        "</form></body></html>", code)
+
+
+@app.route("/api/auth/check")
+def auth_check():
+    # nginx auth_request treats any status other than 2xx/401/403 as a
+    # server error for the whole site, so this only ever says 200 or 401.
+    if auth.authorized(request.headers.get("Authorization"),
+                       request.cookies.get(SESSION_COOKIE)):
+        return "", 200
+    return "", 401
+
+
+@app.route("/login", methods=["GET"])
+def login_form():
+    return _login_page(request.args.get("error"), 200)
+
+
+@app.route("/login", methods=["POST"])
+def login():
+    ip = client_ip(request.headers, request.remote_addr)
+    result = auth.login(ip, request.form.get("password", ""))
+    if result == "bad":
+        app.logger.warning("dashboard login failed from %s", ip)
+        return _login_page("bad", 401)
+    if result == "throttled":
+        return _login_page("throttled", 429)
+    # Always "/", never a caller-supplied target, so this is no open redirect.
+    resp = redirect("/", code=303)
+    if result == "ok":
+        resp.headers["Set-Cookie"] = auth.session_cookie(
+            is_https(request.headers))
+    return resp
+
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    resp = redirect("/login", code=303)
+    resp.headers["Set-Cookie"] = auth.clear_cookie(is_https(request.headers))
+    return resp
 
 
 @app.route("/api/health")

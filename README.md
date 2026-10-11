@@ -85,10 +85,11 @@ first (see below).
 
 Out of the box the dashboard has no login, because it's meant for
 localhost or a private network. Before you expose it to the internet,
-set a password in `.env`:
+add a password to `.env` (compose reads the file literally, so generate
+the value in your shell):
 
 ```bash
-WATTSON_DASHBOARD_TOKEN=$(openssl rand -hex 24)
+echo "WATTSON_DASHBOARD_TOKEN=$(openssl rand -hex 24)" >> .env
 ```
 
 Then `docker compose up -d` again. Now:

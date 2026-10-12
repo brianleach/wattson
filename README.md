@@ -76,7 +76,31 @@ Open **http://localhost:8080**. The first poll takes a few minutes; the
 dashboard builds itself after that.
 
 Want it on your phone? Put [Tailscale](https://tailscale.com/) on the machine
-and your phone. Free, five minutes, no port forwarding.
+and your phone. Free, five minutes, no port forwarding. Or put it behind a
+[Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
+at something like `wattson.example.com`, but set a dashboard password
+first (see below).
+
+## Exposing the dashboard
+
+Out of the box the dashboard has no login, because it's meant for
+localhost or a private network. Before you expose it to the internet,
+add a password to `.env` (compose reads the file literally, so generate
+the value in your shell):
+
+```bash
+echo "WATTSON_DASHBOARD_TOKEN=$(openssl rand -hex 24)" >> .env
+```
+
+Then `docker compose up -d` again. Now:
+
+- Browsers get a login page once, then stay logged in for 30 days.
+- Scripts skip the login with `Authorization: Bearer <token>`.
+- Changing the token logs everyone out.
+- Five wrong passwords from one IP within 10 minutes locks that IP out
+  for the rest of the 10 minutes.
+
+`/api/health` stays open so uptime checks keep working.
 
 ## Try the demo (no Rivian account needed)
 
@@ -129,6 +153,7 @@ own; nothing needs to wake up every few minutes just to check.
 | `WATTSON_GAS_PRICE` | No | Pin a $/gal gas price (skips the AAA scrape; demo sets this) |
 | `WATTSON_GAS_PRICE_URL` | No | AAA gas-price page (default `https://gasprices.aaa.com?state=CA`) |
 | `WATTSON_GAS_PRICE_METRO` | No | Metro label on the AAA page (default `Los Angeles-Long Beach`) |
+| `WATTSON_DASHBOARD_TOKEN` | No | Dashboard password; unset leaves the dashboard open (see [Exposing the dashboard](#exposing-the-dashboard)) |
 
 Drop a `hero.webp` image of your car in `assets/` to customize the dashboard
 hero. (Optional; the layout holds without it.)
@@ -142,6 +167,7 @@ hero. (Optional; the layout holds without it.)
 - `geocode.py`, `weather.py`, location names and ambient temperatures
 - `gasprice.py`, AAA gas-price scraping with daily caching
 - `api.py`, records what you paid per kWh at DC fast chargers
+- `dashboard_auth.py`, the optional dashboard login
 
 ## Fuel savings vs gas
 

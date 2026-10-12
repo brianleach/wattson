@@ -43,6 +43,10 @@ promises. Take it, run it, break it, make it yours.
   cost, and gas equivalent.
 - **Section navigation** — sticky nav with scrollspy that follows you
   down the page.
+- **Optional dashboard login** — set `WATTSON_DASHBOARD_TOKEN` to
+  password-protect your dashboard (handy if you're exposing it through a
+  tunnel). Unset by default, everything works as before. Contributed by
+  @brianleach.
 
 ## Quick start
 
@@ -193,3 +197,4 @@ it forward: keep it open, keep it fun.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+

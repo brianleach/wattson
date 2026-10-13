@@ -36,8 +36,8 @@ promises. Take it, run it, break it, make it yours.
 
 - **Fuel savings vs gas** — lifetime and per-session savings against a gas
   SUV, priced at each charge day's AAA gas price. Home sessions count
-  automatically; DC fast-charge costs are entered by hand (click **? add
-  cost** on the charging-log row).
+  automatically; DC fast-charge costs come from Rivian's charging history
+  (click **? add cost** on the charging-log row for anything it misses).
 - **Clickable hero cards** — the top stats are clickable now and jump to their detail sections.
 - **Savings breakdown table** — every session with AC/DC type, kWh, EV
   cost, and gas equivalent.
@@ -177,15 +177,21 @@ hero. (Optional; the layout holds without it.)
 
 The hero card shows lifetime savings against driving a gas SUV
 (`WATTSON_GAS_COMPARISON_MPG`, default 25 MPG). Each charging session is
-priced individually. EV cost is kWh times your home rate (or the DC
-price you entered). Gas cost is the session's miles divided by the
-comparison MPG, times that day's AAA gas price. Home sessions count automatically; DC fast
-charges are excluded until you record what you paid.
+priced individually. EV cost is kWh times your home rate (or the
+session's DC price). Gas cost is the session's miles divided by the
+comparison MPG, times that day's AAA gas price. Home sessions count automatically.
 
-To record a DC price, click **? add cost** on the charging-log row. A small
-form saves the $/kWh rate and regenerates the dashboard. Editing a
-priced session reopens the form with the current value. Entering `$0.00`
-marks a free session.
+DC fast-charge prices are pulled from your Rivian charging history: when a
+session is still unpriced, the poller checks Rivian (at most twice an hour)
+for what you were billed and spreads that total over the kWh Wattson saw
+go into the battery, so the session's EV cost is exactly what you paid. DC
+charges Rivian doesn't price (some third-party networks, free sessions) are
+excluded until you record what you paid.
+
+To record or override a DC price, click **? add cost** (or **edit**) on the
+charging-log row. A small form saves the $/kWh rate and regenerates the
+dashboard. A price you enter is never overwritten by Rivian's. Entering
+`$0.00` marks a free session.
 
 ## Contributing
 

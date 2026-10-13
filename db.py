@@ -107,6 +107,19 @@ CREATE TABLE IF NOT EXISTS places(
     PRIMARY KEY (lat_r, lon_r)
 );
 
+-- Paid public charging sessions from Rivian's charging API, kept so their
+-- prices can be re-applied to DC charges after every re-derive.
+CREATE TABLE IF NOT EXISTS charge_receipts(
+    transaction_id TEXT PRIMARY KEY,
+    start_ts INTEGER NOT NULL,
+    end_ts INTEGER NOT NULL,
+    kwh REAL,
+    paid_total REAL NOT NULL,
+    currency TEXT,
+    vendor TEXT,
+    city TEXT
+);
+
 -- Ambient temperature cache for trips (Open-Meteo, hourly): one row per
 -- (local day, hour, ~11 km cell). Filled on demand by weather.temp_for_trip.
 CREATE TABLE IF NOT EXISTS weather_cache(
@@ -229,6 +242,60 @@ def set_place(lat_r: int, lon_r: int, label: str | None, ts: int) -> None:
             " VALUES (?,?,?,?)", (lat_r, lon_r, label, ts))
 
 
+def upsert_charge_receipts(receipts: list[dict]) -> None:
+    with connect() as con:
+        con.executemany(
+            "INSERT OR REPLACE INTO charge_receipts (transaction_id, start_ts,"
+            " end_ts, kwh, paid_total, currency, vendor, city)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            [(r["transaction_id"], r["start_ts"], r["end_ts"], r["kwh"],
+              r["paid_total"], r["currency"], r["vendor"], r["city"])
+             for r in receipts])
+        apply_charge_receipts(con)
+
+
+def apply_charge_receipts(con) -> None:
+    """Price DC charges from the receipt they overlap most in time.
+
+    Matching runs against every DC charge, priced or not, so a receipt whose
+    session already has a manual price can't drift onto a neighbor. Only
+    unpriced charges are written: a manual entry always wins. The rate uses
+    our battery-side kWh, not the billed kWh, so the session's EV cost
+    equals what was paid.
+    """
+    receipts = con.execute(
+        "SELECT start_ts, end_ts, paid_total FROM charge_receipts"
+        " WHERE currency = 'USD'").fetchall()
+    charges = con.execute(
+        "SELECT id, start_ts, end_ts, kwh_added, user_cost_per_kwh"
+        " FROM charges WHERE lower(charge_type) LIKE '%dc%'").fetchall()
+    pairs = []
+    for ri, r in enumerate(receipts):
+        for c in charges:
+            overlap = (min(r["end_ts"], c["end_ts"])
+                       - max(r["start_ts"], c["start_ts"]))
+            if overlap > 0:
+                pairs.append((overlap, ri, c))
+    used_receipts, used_charges = set(), set()
+    for _, ri, c in sorted(pairs, key=lambda p: p[0], reverse=True):
+        if ri in used_receipts or c["id"] in used_charges:
+            continue
+        used_receipts.add(ri)
+        used_charges.add(c["id"])
+        if c["user_cost_per_kwh"] is None and (c["kwh_added"] or 0) > 0:
+            con.execute(
+                "UPDATE charges SET user_cost_per_kwh = ? WHERE id = ?",
+                (receipts[ri]["paid_total"] / c["kwh_added"], c["id"]))
+
+
+def has_unpriced_dc_charge() -> bool:
+    with connect() as con:
+        return con.execute(
+            "SELECT 1 FROM charges WHERE lower(charge_type) LIKE '%dc%'"
+            " AND user_cost_per_kwh IS NULL AND kwh_added > 0"
+            " LIMIT 1").fetchone() is not None
+
+
 def rebuild_derived(trips: list[dict], drains: list[dict],
                     charges: list[dict] | None = None,
                     errands: list[dict] | None = None) -> None:
@@ -288,6 +355,8 @@ def rebuild_derived(trips: list[dict], drains: list[dict],
             con.executemany(
                 "UPDATE charges SET user_cost_per_kwh = ? WHERE start_ts = ?",
                 [(v, k) for k, v in _costs.items()])
+        # Receipts outlive start_ts shifts that would orphan a restored cost.
+        apply_charge_receipts(con)
         con.executemany(
             "INSERT INTO errands (day, drives, miles, kwh_used)"
             " VALUES (?,?,?,?)",

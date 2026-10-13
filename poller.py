@@ -30,12 +30,16 @@ from config import (BURST_HEARTBEAT_PATH, BURST_PID_PATH, FLAG_REAUTH,
                     POLL_INTERVAL_ASLEEP, POLL_INTERVAL_DRIVING,
                     POLL_INTERVAL_PARKED, SPEED_DRIVE_EPS, STATE_PATH,
                     TOKENS_PATH, WATCH_PATH)
-from db import init, insert_snapshot, insert_raw_snapshot
-from riv import NeedsReauth, fetch_state
+from db import (has_unpriced_dc_charge, init, insert_snapshot,
+                insert_raw_snapshot, upsert_charge_receipts)
+from riv import NeedsReauth, fetch_charge_receipts, fetch_state
 from analyze import DRIVE_GEARS, haversine_mi
 
 
 MOVE_GPS_MI = 0.06  # ~100 m; parked GPS jitter stays well under this
+# Checking twice an hour while a DC charge is unpriced picks up new receipts
+# without hitting the charging API on every poll.
+RECEIPT_SYNC_SECONDS = 30 * 60
 
 
 def _require_home() -> None:
@@ -83,6 +87,28 @@ def load_state() -> dict:
 
 def save_state(state: dict) -> None:
     STATE_PATH.write_text(json.dumps(state))
+
+
+def sync_charge_receipts(state: dict, now: int) -> None:
+    """Pull paid charging sessions from Rivian and price unpriced DC charges.
+
+    Saves the attempt time into ``state`` before fetching, so a failing
+    endpoint is retried on the throttle window rather than every poll.
+    Never raises: receipts are a nicety and must not break polling.
+    """
+    if now - state.get("last_receipt_sync", 0) < RECEIPT_SYNC_SECONDS:
+        return
+    try:
+        if not has_unpriced_dc_charge():
+            return
+        state["last_receipt_sync"] = now
+        save_state(state)
+        upsert_charge_receipts(fetch_charge_receipts())
+    except NeedsReauth:
+        FLAG_REAUTH.touch()
+        print("Session expired - owner needs to re-link (NEEDS_REAUTH).")
+    except Exception:
+        traceback.print_exc()
 
 
 def is_asleep(power: str | None, gear: str | None = None,
@@ -158,6 +184,7 @@ def main() -> None:
 
     insert_snapshot(snap)
     insert_raw_snapshot(snap["ts"], raw)
+    sync_charge_receipts(state, now)
 
     import analyze
     trips, drains, charges, errands = analyze.derive()
@@ -171,7 +198,8 @@ def main() -> None:
                 "prev_odo": state.get("last_odo"),
                 "last_odo": snap.get("odometer"),
                 "trips": len(trips), "drains": len(drains),
-                "last_soc": snap.get("soc")})
+                "last_soc": snap.get("soc"),
+                "last_receipt_sync": state.get("last_receipt_sync", 0)})
     print(f"ok soc={snap.get('soc')} power={snap.get('power_state')} "
           f"trips={len(trips)} drains={len(drains)} charges={len(charges)} "
           f"errand_days={len(errands)}")
@@ -261,7 +289,9 @@ def burst_main(minutes: float = 48, interval: float = 120,
                             "prev_odo": state.get("last_odo"),
                             "last_odo": last_snap.get("odometer"),
                             "trips": len(trips), "drains": len(drains),
-                            "last_soc": last_snap.get("soc")})
+                            "last_soc": last_snap.get("soc"),
+                            "last_receipt_sync":
+                                state.get("last_receipt_sync", 0)})
             except Exception:
                 traceback.print_exc()
         print(f"{tag} polls={polls} trips={len(trips)} drains={len(drains)} "
@@ -295,6 +325,7 @@ def burst_main(minutes: float = 48, interval: float = 120,
                 snap, raw = fetch_state()
                 insert_snapshot(snap)
                 insert_raw_snapshot(snap["ts"], raw)
+                sync_charge_receipts(load_state(), int(time.time()))
                 last_snap = snap
                 polls += 1
                 print(f"burst poll {polls} soc={snap.get('soc')} "

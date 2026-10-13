@@ -288,12 +288,13 @@ def apply_charge_receipts(con) -> None:
                 (receipts[ri]["paid_total"] / c["kwh_added"], c["id"]))
 
 
-def has_unpriced_dc_charge() -> bool:
+def latest_unpriced_dc_end(since: int) -> int | None:
+    """End time of the newest unpriced DC charge that ended after ``since``."""
     with connect() as con:
         return con.execute(
-            "SELECT 1 FROM charges WHERE lower(charge_type) LIKE '%dc%'"
-            " AND user_cost_per_kwh IS NULL AND kwh_added > 0"
-            " LIMIT 1").fetchone() is not None
+            "SELECT MAX(end_ts) FROM charges WHERE lower(charge_type) LIKE"
+            " '%dc%' AND user_cost_per_kwh IS NULL AND kwh_added > 0"
+            " AND end_ts > ?", (since,)).fetchone()[0]
 
 
 def rebuild_derived(trips: list[dict], drains: list[dict],

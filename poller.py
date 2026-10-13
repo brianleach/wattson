@@ -30,16 +30,18 @@ from config import (BURST_HEARTBEAT_PATH, BURST_PID_PATH, FLAG_REAUTH,
                     POLL_INTERVAL_ASLEEP, POLL_INTERVAL_DRIVING,
                     POLL_INTERVAL_PARKED, SPEED_DRIVE_EPS, STATE_PATH,
                     TOKENS_PATH, WATCH_PATH)
-from db import (has_unpriced_dc_charge, init, insert_snapshot,
-                insert_raw_snapshot, upsert_charge_receipts)
+from db import (init, insert_snapshot, insert_raw_snapshot,
+                latest_unpriced_dc_end, upsert_charge_receipts)
 from riv import NeedsReauth, fetch_charge_receipts, fetch_state
 from analyze import DRIVE_GEARS, haversine_mi
 
 
 MOVE_GPS_MI = 0.06  # ~100 m; parked GPS jitter stays well under this
-# Checking twice an hour while a DC charge is unpriced picks up new receipts
-# without hitting the charging API on every poll.
-RECEIPT_SYNC_SECONDS = 30 * 60
+# Rivian has the receipt by the time a session ends, so one fetch right after
+# a DC charge appears normally prices it. Retries are hourly, and a charge
+# still unpriced after a day is one Rivian won't price.
+RECEIPT_RETRY_SECONDS = 60 * 60
+RECEIPT_WINDOW_SECONDS = 24 * 60 * 60
 
 
 def _require_home() -> None:
@@ -92,15 +94,21 @@ def save_state(state: dict) -> None:
 def sync_charge_receipts(state: dict, now: int) -> None:
     """Pull paid charging sessions from Rivian and price unpriced DC charges.
 
-    Saves the attempt time into ``state`` before fetching, so a failing
-    endpoint is retried on the throttle window rather than every poll.
-    Never raises: receipts are a nicety and must not break polling.
+    The first sync ever runs unconditionally to pick up history. After
+    that, a DC charge that ended since the last sync is fetched for at
+    once, and one still unpriced is retried at most hourly. Saves the
+    attempt time into ``state`` before fetching, so a failing endpoint
+    waits for the retry window too. Never raises: receipts are a nicety and
+    must not break polling.
     """
-    if now - state.get("last_receipt_sync", 0) < RECEIPT_SYNC_SECONDS:
-        return
+    last = state.get("last_receipt_sync")
     try:
-        if not has_unpriced_dc_charge():
-            return
+        if last is not None:
+            newest = latest_unpriced_dc_end(now - RECEIPT_WINDOW_SECONDS)
+            if newest is None:
+                return
+            if newest <= last and now - last < RECEIPT_RETRY_SECONDS:
+                return
         state["last_receipt_sync"] = now
         save_state(state)
         upsert_charge_receipts(fetch_charge_receipts())
@@ -184,13 +192,8 @@ def main() -> None:
 
     insert_snapshot(snap)
     insert_raw_snapshot(snap["ts"], raw)
-    sync_charge_receipts(state, now)
 
-    import analyze
-    trips, drains, charges, errands = analyze.derive()
-
-    import report
-    report.generate()
+    trips, drains, charges, errands = _derive_sync_report(state, now)
 
     save_state({"last_poll": now, "last_power": snap.get("power_state"),
                 "last_gear": snap.get("gear"),
@@ -199,7 +202,7 @@ def main() -> None:
                 "last_odo": snap.get("odometer"),
                 "trips": len(trips), "drains": len(drains),
                 "last_soc": snap.get("soc"),
-                "last_receipt_sync": state.get("last_receipt_sync", 0)})
+                "last_receipt_sync": state.get("last_receipt_sync")})
     print(f"ok soc={snap.get('soc')} power={snap.get('power_state')} "
           f"trips={len(trips)} drains={len(drains)} charges={len(charges)} "
           f"errand_days={len(errands)}")
@@ -291,7 +294,7 @@ def burst_main(minutes: float = 48, interval: float = 120,
                             "trips": len(trips), "drains": len(drains),
                             "last_soc": last_snap.get("soc"),
                             "last_receipt_sync":
-                                state.get("last_receipt_sync", 0)})
+                                state.get("last_receipt_sync")})
             except Exception:
                 traceback.print_exc()
         print(f"{tag} polls={polls} trips={len(trips)} drains={len(drains)} "
@@ -325,7 +328,6 @@ def burst_main(minutes: float = 48, interval: float = 120,
                 snap, raw = fetch_state()
                 insert_snapshot(snap)
                 insert_raw_snapshot(snap["ts"], raw)
-                sync_charge_receipts(load_state(), int(time.time()))
                 last_snap = snap
                 polls += 1
                 print(f"burst poll {polls} soc={snap.get('soc')} "
@@ -335,7 +337,10 @@ def burst_main(minutes: float = 48, interval: float = 120,
             # "Updated" time tracks the latest poll instead of lagging to
             # the burst end. Failures here must never kill the poll loop.
             try:
-                _derive_and_report()
+                if dry_run:
+                    _derive_and_report()
+                else:
+                    _derive_sync_report(load_state(), int(time.time()))
             except Exception:
                 traceback.print_exc()
         except NeedsReauth:
@@ -371,10 +376,24 @@ def burst_main(minutes: float = 48, interval: float = 120,
             traceback.print_exc()
 
 
+def _derive_sync_report(state: dict, now: int):
+    """Derive, sync Rivian receipts, then rebuild the report.
+
+    The sync sits after derive so a DC charge that just ended is already a
+    row and gets priced in the same poll that first records it.
+    """
+    import analyze
+    trips, drains, charges, errands = analyze.derive()
+    sync_charge_receipts(state, now)
+    import report
+    report.generate()
+    return trips, drains, charges, errands
+
+
 def _derive_and_report():
     """Run analyze.derive() + report.generate().
 
-    Shared by the burst loop (every poll), burst finish, and --derive-only.
+    Shared by the burst dry-run loop, burst finish, and --derive-only.
     """
     import analyze
     trips, drains, charges, errands = analyze.derive()

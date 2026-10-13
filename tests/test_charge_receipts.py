@@ -185,27 +185,32 @@ class ApplyTests(DbTestCase):
         self.assertAlmostEqual(self.costs()[0], 33.72 / 51.77)
 
 
-class UnpricedDcTests(DbTestCase):
+class LatestUnpricedDcEndTests(DbTestCase):
     def test_unpriced_dc_charge(self):
         self.derive(charge())
-        self.assertTrue(db.has_unpriced_dc_charge())
+        self.assertEqual(db.latest_unpriced_dc_end(T), T + 1700)
+
+    def test_charge_ended_before_window(self):
+        self.derive(charge())
+        self.assertIsNone(db.latest_unpriced_dc_end(T + 1700))
 
     def test_priced_dc_charge(self):
         self.derive(charge())
         self.set_cost(T + 100, 0.5)
-        self.assertFalse(db.has_unpriced_dc_charge())
+        self.assertIsNone(db.latest_unpriced_dc_end(T))
 
     def test_dc_charge_without_kwh(self):
         self.derive(charge(kwh_added=0))
-        self.assertFalse(db.has_unpriced_dc_charge())
+        self.assertIsNone(db.latest_unpriced_dc_end(T))
 
     def test_ac_charge(self):
         self.derive(charge(charge_type="AC"))
-        self.assertFalse(db.has_unpriced_dc_charge())
+        self.assertIsNone(db.latest_unpriced_dc_end(T))
 
 
 class SyncTests(DbTestCase):
-    NOW = T + 7200
+    CHARGE_END = T + 1700
+    NOW = CHARGE_END + 120
 
     def setUp(self):
         super().setUp()
@@ -219,29 +224,49 @@ class SyncTests(DbTestCase):
             self.addCleanup(patcher.stop)
         self.derive(charge())
 
-    def sync(self, state, fetch):
+    def sync(self, state, fetch, now=NOW):
         with mock.patch.object(poller, "fetch_charge_receipts", fetch):
-            poller.sync_charge_receipts(state, self.NOW)
+            poller.sync_charge_receipts(state, now)
 
     def saved_state(self):
         return json.loads(self.state_path.read_text())
 
-    def test_sync_prices_charge_and_records_attempt(self):
-        state = {}
+    def test_first_sync_runs_without_unpriced_charge(self):
+        self.set_cost(T + 100, 0.5)
+        fetch = mock.Mock(return_value=[])
+        self.sync({}, fetch)
+        fetch.assert_called_once()
+
+    def test_new_charge_synced_right_after_it_ends(self):
+        state = {"last_receipt_sync": self.CHARGE_END - 600}
         self.sync(state, mock.Mock(return_value=[receipt()]))
         self.assertAlmostEqual(self.costs()[0], 33.72 / 51.77)
         self.assertEqual(state["last_receipt_sync"], self.NOW)
         self.assertEqual(self.saved_state()["last_receipt_sync"], self.NOW)
 
-    def test_throttled_within_window(self):
+    def test_retry_waits_an_hour(self):
         fetch = mock.Mock(return_value=[])
-        self.sync({"last_receipt_sync": self.NOW - 60}, fetch)
+        self.sync({"last_receipt_sync": self.NOW}, fetch,
+                  now=self.NOW + poller.RECEIPT_RETRY_SECONDS - 1)
+        fetch.assert_not_called()
+
+    def test_retry_after_an_hour(self):
+        fetch = mock.Mock(return_value=[])
+        self.sync({"last_receipt_sync": self.NOW}, fetch,
+                  now=self.NOW + poller.RECEIPT_RETRY_SECONDS)
+        fetch.assert_called_once()
+
+    def test_charge_older_than_window_not_synced(self):
+        fetch = mock.Mock(return_value=[])
+        now = self.CHARGE_END + poller.RECEIPT_WINDOW_SECONDS
+        self.sync({"last_receipt_sync": self.CHARGE_END - 600}, fetch,
+                  now=now)
         fetch.assert_not_called()
 
     def test_skipped_without_unpriced_dc_charge(self):
         self.set_cost(T + 100, 0.5)
         fetch = mock.Mock(return_value=[])
-        self.sync({}, fetch)
+        self.sync({"last_receipt_sync": self.CHARGE_END - 600}, fetch)
         fetch.assert_not_called()
 
     def test_needs_reauth_sets_flag(self):
@@ -253,6 +278,19 @@ class SyncTests(DbTestCase):
         with mock.patch.object(poller.traceback, "print_exc"):
             self.sync({}, mock.Mock(side_effect=RuntimeError("boom")))
         self.assertEqual(self.saved_state()["last_receipt_sync"], self.NOW)
+
+
+class DeriveSyncReportTests(unittest.TestCase):
+    def test_sync_runs_between_derive_and_report(self):
+        calls = mock.Mock()
+        calls.derive.return_value = ([], [], [], [])
+        with mock.patch("analyze.derive", calls.derive), \
+                mock.patch("report.generate", calls.generate), \
+                mock.patch.object(poller, "sync_charge_receipts",
+                                  calls.sync):
+            poller._derive_sync_report({}, T)
+        self.assertEqual([c[0] for c in calls.mock_calls],
+                         ["derive", "sync", "generate"])
 
 
 if __name__ == "__main__":

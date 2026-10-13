@@ -1,4 +1,5 @@
-"""Thin wrapper around rivian-python-client: token persistence + state fetch.
+"""Thin wrapper around rivian-python-client: token persistence, state fetch,
+and charging history.
 
 Session tokens are stored encrypted (see crypto.py). The Rivian password is
 NEVER stored - it is used once during `auth.py` and discarded.
@@ -17,6 +18,13 @@ from crypto import unseal
 # The bundled client's gnssLocation template includes an `isAuthorized`
 # subfield that Rivian's current schema rejects. Patch it once at import.
 _rivmod.TEMPLATE_MAP["gnssLocation"] = "{ latitude longitude timeStamp }"
+
+
+CHARGE_SESSIONS_QUERY = (
+    "query getCompletedSessionSummaries { getCompletedSessionSummaries {"
+    " chargerType currencyCode paidTotal startInstant endInstant"
+    " totalEnergyKwh rangeAddedKm city transactionId vendor isPublic"
+    " isHomeCharger } }")
 
 
 class NeedsReauth(Exception):
@@ -105,3 +113,58 @@ def fetch_state() -> tuple[dict, dict]:
         "cloud_sync_ts": cc_sync_ts,
     }
     return snap, raw
+
+
+async def _fetch_charge_sessions(user_session_token: str) -> list[dict]:
+    async with aiohttp.ClientSession(trust_env=True) as session:
+        client = Rivian(session=session)
+        await client.create_csrf_token()
+        client._user_session_token = user_session_token
+        # The client has no public method for completed charging sessions,
+        # so send the query through its GraphQL helper.
+        headers = _rivmod.BASE_HEADERS | {"U-Sess": user_session_token}
+        body = {"operationName": "getCompletedSessionSummaries",
+                "query": CHARGE_SESSIONS_QUERY, "variables": {}}
+        try:
+            resp = await client._Rivian__graphql_query(
+                headers, _rivmod.GRAPHQL_CHARGING, body)
+        except Exception as exc:
+            if _is_unauthenticated(exc):
+                raise NeedsReauth() from exc
+            raise
+        data = await resp.json()
+        return data["data"]["getCompletedSessionSummaries"]
+
+
+def _epoch(instant: str) -> int:
+    return int(datetime.fromisoformat(
+        instant.replace("Z", "+00:00")).timestamp())
+
+
+def parse_rivian_sessions(sessions: list[dict]) -> list[dict]:
+    """Rows for db.rivian_sessions, home sessions included.
+
+    Keyed by start time when Rivian sends no transactionId, so a re-fetch
+    updates the same row instead of adding a duplicate.
+    """
+    return [{"transaction_id": (s.get("transactionId")
+                                or f"start-{s['startInstant']}"),
+             "start_ts": _epoch(s["startInstant"]),
+             "end_ts": _epoch(s["endInstant"]),
+             "kwh": s.get("totalEnergyKwh"),
+             "paid_total": s.get("paidTotal"),
+             "currency": s.get("currencyCode"),
+             "vendor": s.get("vendor"),
+             "city": s.get("city"),
+             "range_added_km": s.get("rangeAddedKm"),
+             "is_home": s.get("isHomeCharger"),
+             "is_public": s.get("isPublic")}
+            for s in sessions]
+
+
+def fetch_rivian_sessions() -> list[dict]:
+    """Return every completed charging session from Rivian's charging API."""
+    tokens = unseal(TOKENS_PATH.read_bytes())
+    sessions = asyncio.run(
+        _fetch_charge_sessions(tokens["user_session_token"]))
+    return parse_rivian_sessions(sessions)

@@ -1,5 +1,5 @@
 """Thin wrapper around rivian-python-client: token persistence, state fetch,
-and charging receipts.
+and charging history.
 
 Session tokens are stored encrypted (see crypto.py). The Rivian password is
 NEVER stored - it is used once during `auth.py` and discarded.
@@ -141,26 +141,30 @@ def _epoch(instant: str) -> int:
         instant.replace("Z", "+00:00")).timestamp())
 
 
-def parse_charge_receipts(sessions: list[dict]) -> list[dict]:
-    """Keep the sessions Rivian billed, as rows for db.charge_receipts.
+def parse_rivian_sessions(sessions: list[dict]) -> list[dict]:
+    """Rows for db.rivian_sessions, home sessions included.
 
-    Home sessions come back with a null paidTotal.
+    Keyed by start time when Rivian sends no transactionId, so a re-fetch
+    updates the same row instead of adding a duplicate.
     """
-    return [{"transaction_id": s["transactionId"],
+    return [{"transaction_id": (s.get("transactionId")
+                                or f"start-{s['startInstant']}"),
              "start_ts": _epoch(s["startInstant"]),
              "end_ts": _epoch(s["endInstant"]),
              "kwh": s.get("totalEnergyKwh"),
-             "paid_total": s["paidTotal"],
+             "paid_total": s.get("paidTotal"),
              "currency": s.get("currencyCode"),
              "vendor": s.get("vendor"),
-             "city": s.get("city")}
-            for s in sessions
-            if s.get("paidTotal") is not None and s.get("transactionId")]
+             "city": s.get("city"),
+             "range_added_km": s.get("rangeAddedKm"),
+             "is_home": s.get("isHomeCharger"),
+             "is_public": s.get("isPublic")}
+            for s in sessions]
 
 
-def fetch_charge_receipts() -> list[dict]:
-    """Return paid public charging sessions from Rivian's charging API."""
+def fetch_rivian_sessions() -> list[dict]:
+    """Return every completed charging session from Rivian's charging API."""
     tokens = unseal(TOKENS_PATH.read_bytes())
     sessions = asyncio.run(
         _fetch_charge_sessions(tokens["user_session_token"]))
-    return parse_charge_receipts(sessions)
+    return parse_rivian_sessions(sessions)

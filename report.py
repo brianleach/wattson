@@ -1821,6 +1821,19 @@ def _fmt_money(v: float, decimals: int = 0) -> str:
     return ("-" if v < 0 else "") + s
 
 
+def _lifetime_miles_sub(first_odo, tracked_mi: float) -> str:
+    """Total miles driven, plus the tracked miles efficiency is based on.
+
+    The first snapshot's odometer is what the car had driven before
+    tracking began; there's no energy data for those miles.
+    """
+    if first_odo is None:
+        return f"{tracked_mi:.1f} mi tracked"
+    before = first_odo * ODOMETER_METERS_PER_UNIT / 1609.344
+    return (f"{before + tracked_mi:,.0f} mi total &middot; "
+            f"{tracked_mi:,.0f} tracked")
+
+
 def _gas_subtitle(rows: list[dict]) -> str:
     """Two-line hero subtitle: N home sessions / N DC sessions."""
     n_home = sum(1 for r in rows if not r.get("is_dc"))
@@ -1874,6 +1887,9 @@ def generate() -> None:
             "SELECT * FROM charges ORDER BY start_ts DESC")]
         agg = con.execute(
             "SELECT SUM(miles) m, SUM(kwh_used) k FROM trips").fetchone()
+        first_odo = con.execute(
+            "SELECT odometer FROM snapshots WHERE odometer IS NOT NULL"
+            " ORDER BY ts LIMIT 1").fetchone()
 
     latest = dict(latest) if latest else {}
     soc = latest.get("soc")
@@ -2301,7 +2317,10 @@ def generate() -> None:
                         if _savings_rows else "-"),
         "__GASSAVESUB__": (_gas_subtitle(_savings_rows)
                            if _savings_rows else ""),
-        "__LIFESUB__": (f"{float(os.environ.get('WATTSON_DEMO_LIFETIME_MI', agg['m'])):.1f} mi tracked" if agg["m"] else ""),
+        "__LIFESUB__": (_lifetime_miles_sub(
+            first_odo["odometer"] if first_odo else None,
+            float(os.environ.get("WATTSON_DEMO_LIFETIME_MI", agg["m"])))
+            if agg["m"] else ""),
         "__TRIPMONTH__": trip_month_html,
         "__TRIPS__": trips_html,
         "__BATTERYNOTE__": batt_note,

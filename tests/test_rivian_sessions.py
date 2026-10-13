@@ -330,6 +330,18 @@ class ReportSavingsTests(DbTestCase):
                          2)
 
 
+class LifetimeMilesTests(unittest.TestCase):
+    def test_total_includes_miles_before_tracking(self):
+        # 300000 m on the first snapshot is 186.4 mi before tracking.
+        with mock.patch.object(report, "ODOMETER_METERS_PER_UNIT", 1.0):
+            sub = report._lifetime_miles_sub(300000, 100.0)
+        self.assertEqual(sub, "286 mi total &middot; 100 tracked")
+
+    def test_tracked_only_without_odometer(self):
+        self.assertEqual(report._lifetime_miles_sub(None, 100.0),
+                         "100.0 mi tracked")
+
+
 class LatestUnpricedDcEndTests(DbTestCase):
     def test_unpriced_dc_charge(self):
         self.derive(charge())

@@ -1660,9 +1660,10 @@ def _charges_html(charges: list[dict], backfill: list[dict],
             f'{summary}'
             f'{"".join(html for _, html in rows)}</div>')
     footnote = ('<p class="note">Home charging costed at $%.2f/kWh '
-                '(set RIVIAN_HOME_KWH_RATE in .env). Away sessions show no '
-                'cost; public rates vary. Tap "? add cost" on a DC fast '
-                'charge to record what you paid.</p>' % HOME_KWH_RATE)
+                '(set RIVIAN_HOME_KWH_RATE in .env). DC fast-charge costs '
+                'are pulled from your Rivian charging history automatically. '
+                'Tap "? add cost" on a session Rivian doesn\'t price, or to '
+                'override a price.</p>' % HOME_KWH_RATE)
     return "".join(parts) + footnote
 
 
@@ -1821,17 +1822,12 @@ def _fmt_money(v: float, decimals: int = 0) -> str:
     return ("-" if v < 0 else "") + s
 
 
-def _lifetime_miles_sub(first_odo, tracked_mi: float) -> str:
-    """Total miles driven, plus the tracked miles efficiency is based on.
-
-    The first snapshot's odometer is what the car had driven before
-    tracking began; there's no energy data for those miles.
-    """
-    if first_odo is None:
+def _lifetime_miles_sub(odo_mi: float | None, tracked_mi: float) -> str:
+    """Total miles on the odometer, plus the tracked miles efficiency is
+    based on (there's no energy data for miles before tracking began)."""
+    if odo_mi is None:
         return f"{tracked_mi:.1f} mi tracked"
-    before = first_odo * ODOMETER_METERS_PER_UNIT / 1609.344
-    return (f"{before + tracked_mi:,.0f} mi total &middot; "
-            f"{tracked_mi:,.0f} tracked")
+    return f"{odo_mi:,.0f} mi total &middot; {tracked_mi:,.0f} tracked"
 
 
 def _gas_subtitle(rows: list[dict]) -> str:
@@ -1887,9 +1883,6 @@ def generate() -> None:
             "SELECT * FROM charges ORDER BY start_ts DESC")]
         agg = con.execute(
             "SELECT SUM(miles) m, SUM(kwh_used) k FROM trips").fetchone()
-        first_odo = con.execute(
-            "SELECT odometer FROM snapshots WHERE odometer IS NOT NULL"
-            " ORDER BY ts LIMIT 1").fetchone()
 
     latest = dict(latest) if latest else {}
     soc = latest.get("soc")
@@ -2318,7 +2311,7 @@ def generate() -> None:
         "__GASSAVESUB__": (_gas_subtitle(_savings_rows)
                            if _savings_rows else ""),
         "__LIFESUB__": (_lifetime_miles_sub(
-            first_odo["odometer"] if first_odo else None,
+            odo_mi,
             float(os.environ.get("WATTSON_DEMO_LIFETIME_MI", agg["m"])))
             if agg["m"] else ""),
         "__TRIPMONTH__": trip_month_html,

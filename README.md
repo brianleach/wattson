@@ -47,6 +47,11 @@ promises. Take it, run it, break it, make it yours.
   password-protect your dashboard (handy if you're exposing it through a
   tunnel). Unset by default, everything works as before. Contributed by
   @brianleach.
+- **Phantom drain rework** — idle drain is now measured between actual drives
+  (not a fixed overnight window), with watts as the primary metric. Periods
+  with no fresh data show as "no data" instead of fake zeros.
+- **Stale charging fix** — charging sessions now end at the last SoC increase
+  when the API reports stale charging state, killing phantom sessions.
 
 ## Quick start
 
@@ -197,4 +202,5 @@ it forward: keep it open, keep it fun.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
 

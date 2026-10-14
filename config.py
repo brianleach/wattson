@@ -87,7 +87,18 @@ DC_FAST_MIN_KW = 20.0
 # drop read ~1.1 kWh, implying ~88 kWh usable, not 91.4).
 USABLE_KWH = 87.9
 
+# Stale-charging fix: the API's "charging" state goes stale when the car
+# sleeps mid-session. SoC is ground truth: if SoC stays flat for this many
+# minutes inside a charge segment, the session is over; analyze.py ends it
+# at the last snapshot where SoC genuinely increased.
+CHARGE_STALE_SOC_MINUTES = 30
+
+# Skip the stale check at or above this SoC: near full, cell balancing and
+# trickle charging can hold SoC flat while the charger is genuinely active.
+CHARGE_STALE_SKIP_SOC = 90.0
+
 # vehicleMileage unit: the API reports a raw number; a reading in the
 # hundreds of thousands on a new vehicle is consistent with meters.
 # Confirm against the in-app odometer.
 ODOMETER_METERS_PER_UNIT = 1.0
+

@@ -15,7 +15,8 @@ from collections import defaultdict
 from datetime import datetime
 
 import weather
-from config import (DC_FAST_MIN_KW, USABLE_KWH,
+from config import (DC_FAST_MIN_KW, USABLE_KWH, CHARGE_STALE_SOC_MINUTES,
+                    CHARGE_STALE_SKIP_SOC,
                     ODOMETER_METERS_PER_UNIT, TRIP_MIN_SECONDS,
                     LOCAL_TZ)
 from db import connect, init, rebuild_derived
@@ -27,6 +28,10 @@ TRIP_END_GAP = 5 * 60       # seconds of stillness that closes a trip.
 # traffic halts still merge.
 DRAIN_MIN_GAP = 2 * 3600    # seconds of parked time that counts as a drain event
 CHARGE_MIN_SOC_DELTA = 0.3  # % SoC gain that counts as a charge session
+# API SoC resolution is 0.1%: single-quantum ticks during sleep are noise
+# (BMS re-quantization on wake), not energy flow. The stale tail below is the
+# longest suffix staying within one quantum of its max.
+SOC_QUANTUM = 0.1
 
 
 def haversine_mi(a, b) -> float:
@@ -395,7 +400,52 @@ def _charges_from_run(run: list[dict], charges: list[dict]) -> None:
         _close_charge(seg, charges)
 
 
+def _trim_stale_tail(seg: list[dict]) -> list[dict]:
+    """Cut a phantom flat tail off a charge segment.
+
+    The API's "charging" state goes stale when the car sleeps mid-session,
+    so SoC is the ground truth: a real session keeps SoC rising. If the
+    segment ends with a flat tail (no rise beyond one SoC quantum) lasting
+    at least CHARGE_STALE_SOC_MINUTES, the tail is stale API state; end the
+    session at the last snapshot where SoC genuinely increased.
+
+    Skipped when the segment ends at/above CHARGE_STALE_SKIP_SOC (trickle/
+    cell balancing near full) and when the charger explicitly reported
+    charging_complete (fresh, authoritative state; trust it).
+
+    Pure function of the snapshots, so re-derives are idempotent: once a
+    session is closed at the trim point it stays closed.
+    """
+    if len(seg) < 2:
+        return seg
+    if seg[-1].get("charger_state") == "charging_complete":
+        return seg
+    if (seg[-1].get("soc") or 0) >= CHARGE_STALE_SKIP_SOC:
+        return seg
+    # Longest suffix whose values stay within one quantum of the suffix max.
+    # Segments are monotonic (drops > 0.05 split them), so the suffix max is
+    # the last value; the update below is just belt-and-braces.
+    suffix_max = seg[-1]["soc"]
+    tail_start = len(seg) - 1
+    # EPS: SoC arrives as float32 artifacts (e.g. 32.60000228881836), so a
+    # true 0.1% step can read as 0.1000023. Keep the tolerance well under
+    # one quantum (0.1) but above float noise.
+    while (tail_start > 0
+           and suffix_max - seg[tail_start - 1]["soc"] <= SOC_QUANTUM + 1e-3):
+        tail_start -= 1
+        if seg[tail_start]["soc"] > suffix_max:
+            suffix_max = seg[tail_start]["soc"]
+    if tail_start == 0:
+        return seg  # whole segment flat; the gain check below drops it
+    if seg[-1]["ts"] - seg[tail_start]["ts"] >= CHARGE_STALE_SOC_MINUTES * 60:
+        # End at the last snapshot where SoC genuinely increased: tail_start
+        # is the first flat snapshot, so the increase is embodied in it.
+        return seg[:tail_start + 1]
+    return seg
+
+
 def _close_charge(seg: list[dict], charges: list[dict]) -> None:
+    seg = _trim_stale_tail(seg)
     gain = (seg[-1]["soc"] or 0) - (seg[0]["soc"] or 0)
     if gain < CHARGE_MIN_SOC_DELTA:
         return
@@ -608,3 +658,4 @@ if __name__ == "__main__":
     t, d, c, e = derive()
     print(f"{len(t)} trips, {len(d)} drain events, {len(c)} charges, "
           f"{len(e)} errand days")
+

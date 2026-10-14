@@ -237,11 +237,11 @@ def _bars(items: list[tuple[str, float, str]], fmt: str = ".2f",
             + "".join(parts) + "".join(rects) + "</svg>")
 
 
-def _heat_strip(nights: list[dict], bad: set[str]) -> str:
-    """Nightly heat strip for long ranges: one cell per night, weeks as
-    columns, Monday..Sunday rows. Cell color intensity = kWh drain;
-    abnormal nights (>1.6x median) stay red; zero-drain nights are flat
-    dark gray. Hover a cell for that night's numbers."""
+def _heat_strip(nights: list[dict], bad: set) -> str:
+    """Idle-period heat strip for long ranges: one cell per period, weeks as
+    columns, Monday..Sunday rows. Cell color intensity = watts draw;
+    abnormal periods (>1.6x median) stay red; no-data periods are flat
+    dark gray. Hover a cell for that period's numbers."""
     dates = [datetime.strptime(o["day"], "%Y-%m-%d").date()
              for o in nights]
     first_mon = dates[0] - timedelta(days=dates[0].weekday())
@@ -263,7 +263,7 @@ def _heat_strip(nights: list[dict], bad: set[str]) -> str:
         leg_end += 46 + 19 + int(len("abnormal (>1.6x median)") * 6.5)
     W = max(grid_w, leg_end + pad_l)
     H = leg_y + 10
-    vmax = max(o["kwh"] for o in nights) or 1.0
+    vmax = max(o["watts"] for o in nights) or 1.0
 
     def amber(f: float) -> str:
         lo, hi = (61, 47, 26), (245, 166, 35)
@@ -283,17 +283,18 @@ def _heat_strip(nights: list[dict], bad: set[str]) -> str:
             prev_month = monday.month
     for c, r, o in cells:
         x, y = pad_l + c * step, pad_t + r * step
-        if o["day"] in bad:
+        if o["id"] in bad:
             fill = RED
-        elif o["kwh"] <= 0:
+        elif o["no_data"] or o["watts"] <= 0:
             fill = "#2b2b2d"
         else:
-            fill = amber(o["kwh"] / vmax)
-        mi = o.get("mi")
-        tip = f'Night of {o["label"]}: {o["kwh"]:.2f} kWh'
-        if mi:
-            tip += f", {mi:.0f} mi"
-        if o["day"] in bad:
+            fill = amber(o["watts"] / vmax)
+        if o["no_data"]:
+            tip = f'{o["label"]}: no data (car was asleep)'
+        else:
+            tip = (f'{o["label"]}: {o["watts"]:.0f} W, '
+                   f'{o["kwh"]:.2f} kWh over {o["hours"]:.1f} h')
+        if o["id"] in bad:
             tip += " (abnormal)"
         parts.append(
             f'<rect x="{x}" y="{y}" width="{cell}" height="{cell}" rx="3"'
@@ -505,7 +506,7 @@ h2.sec{font-size:32px;font-weight:750;letter-spacing:-0.8px;margin:38px 0 14px}
 .linechart{width:100%;display:block}
 .grid{stroke:#2b2b2e;stroke-width:1}
 .axis{fill:var(--faint);font-size:12px}
-.seg{display:flex;gap:8px;margin:0 0 14px}
+.seg{display:flex;gap:8px;margin:12px 0 14px}
 .seg button{flex:1;border:0;border-radius:14px;padding:11px 0;font-size:15px;
   font-weight:700;background:var(--card2);color:var(--dim);cursor:pointer}
 .seg button.on{background:#f5f5f7;color:#0f0f11}
@@ -646,7 +647,7 @@ __TRIPS__
 </div>
 
 <div class="card">
-  <h3 class="row"><span>Overnight trend</span>__TRENDTOGGLE__</h3>
+  <h3 class="row"><span>Phantom drain</span>__TRENDTOGGLE__</h3>
   __TRENDRANGES__
   <p class="note">__TRENDNOTE__</p>
 </div>
@@ -1611,171 +1612,87 @@ def _charges_html(charges: list[dict], live: dict | None = None,
     return "".join(parts) + footnote
 
 
-def _overnight_table(nights: list[dict], bad: set[str]) -> str:
-    """One row per overnight night, newest first.
+def _idle_table(periods: list[dict], bad: set) -> str:
+    """One row per idle period, newest first.
 
-    Mirrors the chart bars 1:1. No times or durations: every row covers the
-    same 10 PM to 7 AM window, so they would carry no information. The *
-    marker uses the same per-range baseline as the chart's red bars.
+    Mirrors the chart bars 1:1. Watts is the primary metric; periods with
+    no fresh data show "no data" instead of fake zeros. The * marker uses
+    the same 1.6x-median baseline as the chart's red bars.
     """
-    if not nights:
-        return '<p class="dim">No full nights measured yet.</p>'
+    if not periods:
+        return '<p class="dim">No idle periods measured yet.</p>'
     rows = []
-    for o in reversed(nights):
-        warn = ' <span class="warn">*</span>' if o["day"] in bad else ""
-        mi = o.get("mi")
-        if mi is None:
-            mi_txt = ""
-        elif mi < 0.05:
-            mi_txt = ' <span class="dim">&bull;</span> &lt;1 mi'
+    for o in reversed(periods):
+        warn = ' <span class="warn">*</span>' if o["id"] in bad else ""
+        if o["no_data"]:
+            watts_txt, lost_txt = "no data", "no data"
         else:
-            mi_txt = f' <span class="dim">&bull;</span> {mi:.0f} mi'
+            watts_txt = f"{o['watts']:.0f} W"
+            lost_txt = f"{o['kwh']:.2f} kWh"
         rows.append(
             f"<tr><td>{o['label']}{warn}</td>"
-            f"<td>{o['kwh']:.2f} kWh{mi_txt}</td>"
-            f"<td>{o['watts']:.0f} W</td>"
+            f"<td>{o['hours']:.1f} h</td>"
+            f"<td>{watts_txt}</td>"
+            f"<td>{lost_txt}</td>"
             f"<td>{int(o.get('wake_count') or 0)}</td></tr>")
     note = ('<p class="note"><span class="warn">*</span> unusually high vs '
             'baseline.</p>' if bad else '')
-    return ('<table class="drain"><tr><th>Night</th><th>Lost</th>'
-            '<th>Avg draw</th><th>Wake-ups</th></tr>'
+    return ('<table class="drain"><tr><th>Idle period</th><th>Duration</th>'
+            '<th>Avg draw</th><th>Lost</th><th>Wake-ups</th></tr>'
             + "".join(rows) + "</table>" + note)
 
 
 # ---------------------------------------------------------------- generate
 
-def _night_wake_count(snapshots, t1: int, t2: int) -> int:
-    """Wake-up episodes inside one overnight window.
 
-    Same definition as the activity classifier: runs of consecutive SoC
-    drops (>=0.1% per poll) totaling at least 0.15%. Gaps over 45 minutes
-    break the run.
+def _idle_no_data(snapshots, t1: int, t2: int) -> bool:
+    """True if the car was cloud-offline for essentially the whole idle
+    period, meaning the SoC readings are stale cache, not measurements.
+    A zero SoC change under these conditions is "no data", not "no drain"."""
+    win = [s for s in snapshots
+           if t1 <= s["ts"] <= t2 and s.get("cloud_online") is not None]
+    if not win:
+        return True  # no cloud_online data at all (old polls)
+    offline = sum(1 for s in win if s["cloud_online"] == 0)
+    return offline / len(win) > 0.9
+
+
+def _idle_history(drains: list[dict], snapshots) -> list[dict]:
+    """Idle periods between drives, oldest first.
+
+    Uses the drain events from analyze.py (each defined as last drive
+    ended -> next drive started) instead of a fixed clock window. Watts
+    is the primary metric. Periods where the API slept through (stale
+    SoC, car cloud-offline) are marked no_data instead of showing
+    fake zeros.
     """
-    pts = sorted(
-        (s for s in snapshots
-         if t1 <= s["ts"] <= t2 and s.get("soc") is not None),
-        key=lambda s: s["ts"])
-    wakes = 0
-    ep_drop = 0.0
-    in_ep = False
-    for pa, pb in zip(pts, pts[1:]):
-        if pb["ts"] - pa["ts"] > 2700:
-            if in_ep and ep_drop >= 0.15:
-                wakes += 1
-            in_ep, ep_drop = False, 0.0
-            continue
-        if pa["soc"] - pb["soc"] >= 0.1:
-            in_ep = True
-            ep_drop += pa["soc"] - pb["soc"]
-        else:
-            if in_ep and ep_drop >= 0.15:
-                wakes += 1
-            in_ep, ep_drop = False, 0.0
-    if in_ep and ep_drop >= 0.15:
-        wakes += 1
-    return wakes
-
-
-def _overnight_history(snapshots, trips, charges,
-                       n: int | None = 14) -> list[dict]:
-    """Clean 10 PM -> 7 AM parked windows, oldest first.
-
-    Uses the scheduled nightly pulls directly instead of the end-of-day
-    rollup, so the window is always the same parked hours and the label can
-    never disagree with the numbers. Trips or charges landing inside the
-    window are backed out of the drain figure. Miles come from the car's
-    own range estimate, which most owners watch day to day.
-    """
-    by_hour: dict[tuple[str, int], dict] = {}
-    for s in snapshots:
-        if s.get("soc") is None:
-            continue
-        lt = _ldt(s["ts"])
-        if lt.hour not in (22, 7):
-            continue
-        # Endpoint is the poll nearest the start of the hour (10:00 PM /
-        # 7:00 AM), not the last poll in the hour, so the window is really
-        # 10 PM -> 7 AM as labeled.
-        key = (lt.strftime("%Y-%m-%d"), lt.hour)
-        hour_start = lt.replace(minute=0, second=0,
-                                microsecond=0).timestamp()
-        prev = by_hour.get(key)
-        if (prev is None
-                or abs(s["ts"] - hour_start) < abs(prev["ts"] - hour_start)):
-            by_hour[key] = s
-    days = sorted({d for d, _ in by_hour})
     out = []
-    for d in (days[-n:] if n else days):
-        s1 = by_hour.get((d, 22))
-        d2 = (datetime.strptime(d, "%Y-%m-%d")
-              + timedelta(days=1)).strftime("%Y-%m-%d")
-        s2 = by_hour.get((d2, 7))
-        if not (s1 and s2 and s2["ts"] > s1["ts"]):
-            continue
-        # Energy math uses Rivian's rated usable capacity (87.9), not the
-        # API's batteryCapacity (91.4): SoC% maps to usable, verified
-        # against the car's own trip meter Sep 2026.
-        tkw = sum(t["kwh_used"] or 0 for t in trips
-                  if s1["ts"] <= t["start_ts"] and t["end_ts"] <= s2["ts"])
-        tmi = sum(t["miles"] or 0 for t in trips
-                  if s1["ts"] <= t["start_ts"] and t["end_ts"] <= s2["ts"])
-        ckw = sum(c["kwh_added"] or 0 for c in charges
-                  if s1["ts"] <= c["start_ts"] <= s2["ts"])
-        kwh = max(0.0, (s1["soc"] - s2["soc"]) / 100.0 * USABLE_KWH
-                  - tkw + ckw)
-        hrs = (s2["ts"] - s1["ts"]) / 3600.0
-        ra, rb = s1.get("range_mi"), s2.get("range_mi")
-        mi = (max(0.0, (ra - rb) - tmi)
-              if ra is not None and rb is not None else None)
+    for d in drains:
+        t1, t2 = d["sleep_ts"], d["wake_ts"]
+        hours = d.get("hours") or 0
+        watts = d.get("steady_watts") or d.get("watts_avg") or 0
+        kwh = d.get("kwh_lost") or 0
+        no_data = kwh <= 0 and _idle_no_data(snapshots, t1, t2)
+        # Label: "Oct 7" for same-day, "Oct 7-9" for multi-day spans.
+        d1, d2 = _ldt(t1), _ldt(t2)
+        if d1.date() == d2.date():
+            label = d1.strftime("%b %d")
+        else:
+            label = f"{d1.strftime('%b %d')}-{d2.strftime('%d')}"
         out.append({
-            "day": d2,
-            "label": _ldt_str(d),
+            "id": t1,  # unique key for abnormal-period flagging
+            "day": d2.strftime("%Y-%m-%d"),  # for heat-strip positioning
+            "label": label,
+            "hours": round(hours, 1),
             "kwh": round(kwh, 3),
-            "hours": round(hrs, 1),
-            "watts": round(kwh * 1000 / hrs, 1) if hrs else 0,
-            "mi": round(mi, 1) if mi is not None else None,
-            "soc_start": s1["soc"],
-            "soc_end": s2["soc"],
-            "window": f"{_fmt_ts(s1['ts'])} \u2192 {_fmt_ts(s2['ts'])}",
-            "wake_count": _night_wake_count(snapshots, s1["ts"], s2["ts"]),
-            "t1": s1["ts"],
-            "t2": s2["ts"],
-            **_sleep_share(snapshots, s1["ts"], s2["ts"], hrs),
+            "watts": round(watts, 1),
+            "wake_count": int(d.get("wake_count") or 0),
+            "no_data": no_data,
+            "window": f"{_fmt_ts(t1)} \u2192 {_fmt_ts(t2)}",
+            "t1": t1, "t2": t2,
+            "soc_start": d.get("soc_start"), "soc_end": d.get("soc_end"),
         })
     return out
-
-
-def _sleep_share(snapshots, t1: int, t2: int, hrs: float) -> dict:
-    """Share of a parked window the car spent quiet (cloud offline, our best
-    deep-sleep proxy) vs online vs unknown. cloud_online is null on polls
-    from before we started storing it."""
-    win = [s for s in snapshots if t1 <= s["ts"] <= t2]
-    if not win or not hrs:
-        return {"quiet_h": None, "online_h": None, "unknown_h": None}
-    nq = sum(1 for s in win if s.get("cloud_online") == 0)
-    no = sum(1 for s in win if s.get("cloud_online") == 1)
-    nu = len(win) - nq - no
-    return {"quiet_h": round(hrs * nq / len(win), 1),
-            "online_h": round(hrs * no / len(win), 1),
-            "unknown_h": round(hrs * nu / len(win), 1)}
-
-
-def _fmt_money(v: float, decimals: int = 0) -> str:
-    """$12 / -$12 (never $-12)."""
-    s = ("$%d" if decimals == 0 else "$%." + str(decimals) + "f") % abs(v)
-    return ("-" if v < 0 else "") + s
-
-
-def _gas_subtitle(rows: list[dict]) -> str:
-    """Two-line hero subtitle: N home sessions / N DC sessions."""
-    n_home = sum(1 for r in rows if not r.get("is_dc"))
-    n_dc = sum(1 for r in rows if r.get("is_dc"))
-    parts = []
-    if n_home:
-        parts.append("%d home session%s" % (n_home, "" if n_home == 1 else "s"))
-    if n_dc:
-        parts.append("%d DC session%s" % (n_dc, "" if n_dc == 1 else "s"))
-    return "<br>".join(parts)
 
 
 def generate() -> None:
@@ -1814,6 +1731,9 @@ def generate() -> None:
             "SELECT * FROM errands ORDER BY day DESC LIMIT 30")]
         charges = [dict(r) for r in con.execute(
             "SELECT * FROM charges ORDER BY start_ts DESC LIMIT 20")]
+        # Idle-drain events between drives (from analyze.py _drain_from_run)
+        drains = [dict(r) for r in con.execute(
+            "SELECT * FROM drains ORDER BY sleep_ts")]
         # All charges for lifetime savings (no LIMIT: the log shows 20).
         all_charges = [dict(r) for r in con.execute(
             "SELECT * FROM charges ORDER BY start_ts DESC")]
@@ -2035,115 +1955,101 @@ def generate() -> None:
         '<div class="s">range \u00f7 battery %</div></div>'
         '</div>' + pack_chart + '</div>')
 
-    # Overnight drain hero: the clean 11:55 PM -> 5:55 AM window. Nights below
-    # the API's 0.1% SoC reporting step render as "<0.1 kWh" / "<1 mi" so a
-    # quiet night reads as tiny, not broken.
-    overnights = _overnight_history(snapshots, trips, charges, n=None)
-    ov = overnights[-1] if overnights else None
-    if ov:
-        zero = ov["kwh"] < 0.005
-        hrs_bit = f"{ov['hours']:.1f} h"
+    # Phantom drain hero: the latest idle period between drives. Watts is the
+    # primary metric. Periods with no fresh data (car asleep the whole
+    # time) show "no data" instead of a fake zero.
+    idles = _idle_history(drains, snapshots)
+    ov = idles[-1] if idles else None
+    if ov and not ov["no_data"]:
         window_bit = _esc(ov["window"])
-        if zero:
-            kwh_big, mi_big = "&lt;0.1", "&lt;1"
-            verdict = f"No measurable drop over {hrs_bit}"
-        else:
-            kwh_big = f"{ov['kwh']:.2f}"
-            mi_big = f"{ov['mi']:.0f}" if ov["mi"] is not None else "-"
-            verdict = f"About {ov['watts']:.0f} W on average over {hrs_bit}"
-        if ov["mi"] is not None:
-            idle_stat = (
-                '<a class="stat" href="#battery"><div class="k">Overnight drain</div>'
-                f'<div class="v amber">{kwh_big}<small> kWh</small></div>'
-                f'<div class="s">{window_bit}</div>'
-                f'<div class="s">{_esc(verdict)}</div></a>')
-        else:
-            idle_stat = (
-                '<a class="stat" href="#battery"><div class="k">Overnight drain</div>'
-                f'<div class="v amber">{kwh_big}<small> kWh</small></div>'
-                f'<div class="s">{window_bit}</div>'
-                f'<div class="s">{_esc(verdict)}</div></a>')
+        detail = (f"{ov['kwh']:.2f} kWh over {ov['hours']:.1f} h"
+                  f" &bull; {ov['wake_count']} wake-up"
+                  f"{'s' if ov['wake_count'] != 1 else ''}")
+        idle_stat = (
+            '<a class="stat" href="#battery"><div class="k">Phantom drain</div>'
+            f'<div class="v amber">{ov["watts"]:.0f}<small> W</small></div>'
+            f'<div class="s">{window_bit}</div>'
+            f'<div class="s">{detail}</div></a>')
+    elif ov:
+        window_bit = _esc(ov["window"])
+        idle_stat = (
+            '<a class="stat" href="#battery"><div class="k">Phantom drain</div>'
+            '<div class="v amber">-<small> W</small></div>'
+            f'<div class="s">{window_bit}</div>'
+            '<div class="s">no fresh data (car was asleep)</div></a>')
     else:
         idle_stat = (
-            '<a class="stat" href="#battery"><div class="k">Overnight drain</div>'
-            '<div class="v amber">-<small> kWh</small></div>'
+            '<a class="stat" href="#battery"><div class="k">Phantom drain</div>'
+            '<div class="v amber">-<small> W</small></div>'
             '<div class="s">no data yet</div></a>')
-    # Overnight trend: night-by-night bars on the same clean window as the
-    # hero, so "typical" has a visual anchor. A night over 1.6x the median
-    # (needs 3+ nights) flags red. Gets the same 1M / 6M / 1Y / All range
-    # control as Pack health: each range recomputes its own average and
-    # abnormal-night flags. 7N and 1M draw bars with the real kWh axis;
-    # 6M, 1Y and All draw a nightly heat strip (one cell per night, weeks
-    # as columns, color intensity = kWh drain, abnormal nights stay red)
-    # instead of an unreadable year of thin bars. Averaging into weekly
-    # bars was rejected: it could hide a single abnormal night.
-    def _trend_range(nights: list[dict], style: str = "bars") -> str:
-        tot_kwh = sum(o["kwh"] for o in nights)
-        tot_hrs = sum(o["hours"] for o in nights)
-        avg_kwh = tot_kwh / len(nights)
-        avg_w = tot_kwh * 1000 / tot_hrs if tot_hrs else 0
-        mi_vals = [o["mi"] for o in nights if o["mi"] is not None]
-        avg_mi = sum(mi_vals) / len(mi_vals) if mi_vals else None
-        med = sorted(o["kwh"] for o in nights)[len(nights) // 2]
-        bad = {o["day"] for o in nights
-               if len(nights) >= 3 and med > 0 and o["kwh"] > 1.6 * med}
-        if avg_mi is not None:
-            mi_phrase = ("&lt;1 mi/night" if avg_mi < 0.05
-                         else f"{avg_mi:.0f} mi/night")
-            mid = f" &bull; {mi_phrase}"
-        else:
-            mid = ""
-        avg = (f"Average <b class='amber'>{avg_kwh:.2f} kWh/night</b>{mid} "
-               f"(about {avg_w:.0f} W over the 9-hour window) "
-               f"across {len(nights)} "
-               f"night{'s' if len(nights) != 1 else ''}.")
-        if len(nights) < 3:
+    # Phantom drain trend: period-by-period bars, so "typical" has a visual
+    # anchor. A period over 1.6x the median watts (needs 3+ measured
+    # periods) flags red. Gets the same 1M / 6M / 1Y / All range control
+    # as Pack health: each range recomputes its own average and abnormal
+    # flags. 7N and 1M draw bars with the real watts axis; 6M, 1Y and All
+    # draw a heat strip (one cell per period, weeks as columns, color
+    # intensity = watts draw, abnormal periods stay red) instead of an
+    # unreadable year of thin bars. Averaging into weekly bars was
+    # rejected: it could hide a single abnormal period.
+    def _trend_range(periods: list[dict], style: str = "bars") -> str:
+        measured = [o for o in periods if not o["no_data"]]
+        tot_hrs = sum(o["hours"] for o in measured)
+        # Hour-weighted average watts across measured periods.
+        avg_w = (sum(o["watts"] * o["hours"] for o in measured) / tot_hrs
+                 if tot_hrs else 0)
+        tot_kwh = sum(o["kwh"] for o in measured)
+        wvals = sorted(o["watts"] for o in measured)
+        med = wvals[len(wvals) // 2] if wvals else 0
+        bad = {o["id"] for o in measured
+               if len(measured) >= 3 and med > 0 and o["watts"] > 1.6 * med}
+        n_nodata = len(periods) - len(measured)
+        avg = (f"Average <b class='amber'>{avg_w:.0f} W</b> "
+               f"({tot_kwh:.2f} kWh total) "
+               f"across {len(measured)} idle period"
+               f"{'s' if len(measured) != 1 else ''}")
+        if n_nodata:
+            avg += f" &bull; {n_nodata} with no data"
+        avg += "."
+        if len(measured) < 3:
             avg += (" Early data: the average firms up "
-                    "after a few nights.")
-        cols = [RED if o["day"] in bad else AMBER for o in nights]
-        thin = len(nights) > 16
-        labels = ["&lt;0.1 kWh" if o["kwh"] < 0.005 else f"{o['kwh']:.2f} kWh"
-                  for o in nights]
-        sublabels = []
-        for o in nights:
-            mi = o.get("mi")
-            if mi is None:
-                sublabels.append("")
-            elif mi < 0.05:
-                sublabels.append("&lt;1 mi")
-            else:
-                sublabels.append(f"{mi:.0f} mi")
+                    "after a few idle periods.")
+        cols = [RED if o["id"] in bad else AMBER for o in periods]
+        thin = len(periods) > 16
+        labels = ["no data" if o["no_data"] else f"{o['watts']:.0f} W"
+                  for o in periods]
+        sublabels = ["" if o["no_data"] else f"{o['hours']:.0f}h"
+                     for o in periods]
         if style == "strip":
-            chart = _heat_strip(nights, bad)
+            chart = _heat_strip(periods, bad)
         else:
             bars = _bars(
-                [(o["label"], o["kwh"], c) for o, c in zip(nights, cols)],
+                [(o["label"], o["watts"], c) for o, c in zip(periods, cols)],
                 labels=labels, sublabels=sublabels, thin=thin,
-                y_unit="kWh", ref_value=med)
+                y_unit="W", ref_value=med if med > 0 else None)
             chart = bars
-        table = _overnight_table(nights, bad)
+        table = _idle_table(periods, bad)
         details = (
             '<details class="sacc"><summary class="dim" '
             'style="font-size:14px;cursor:pointer;margin-top:14px">'
-            'Night-by-night breakdown</summary>'
+            'Period-by-period breakdown</summary>'
             f'<div class="abody">{table}</div></details>')
         return f'<div class="sub">{avg}</div>' + chart + details
 
     trend_ranges = {}
-    trend_labels = {"7N": "7 nights"}
+    trend_labels = {"7N": "Last 7"}
     for key, span in (("7N", 7), ("1M", 30), ("6M", 182), ("1Y", 365),
                       ("All", None)):
-        nights = overnights[-span:] if span else overnights
-        if len(nights) >= (2 if key in ("7N", "All") else 7):
+        periods = idles[-span:] if span else idles
+        if len(periods) >= (2 if key in ("7N", "All") else 7):
             trend_ranges[key] = _trend_range(
-                nights,
+                periods,
                 style="strip" if key in ("6M", "1Y", "All") else "bars")
     first_key = next(iter(trend_ranges), None)
     if len(trend_ranges) > 1:
         trend_bars = (
             '<div class="seg" id="trendseg">' + "".join(
                 f'<button data-n="{k}"'
-                f"{' class=\"on\"' if k == first_key else ''}>"
+                f'{" class=\"on\"" if k == first_key else ""}>'
                 f'{trend_labels.get(k, k)}</button>'
                 for k in trend_ranges) + '</div>' + "".join(
                 f'<div id="trend{k}"{" hidden" if k != first_key else ""}>'
@@ -2152,13 +2058,13 @@ def generate() -> None:
     elif trend_ranges:
         trend_bars = trend_ranges[first_key]
     else:
-        trend_bars = ("No full nights measured yet. "
-                      "The nightly check fills this in.")
+        trend_bars = ("No idle periods measured yet. "
+                      "Drive the car and park it to fill this in.")
     trend_toggle = ""
     if trend_ranges:
-        trend_note = ("Each bar is one parked night, 10 PM to 7 AM, "
-                      "the same window as the headline above. Trips or "
-                      "charging inside the window are backed out.")
+        trend_note = ("Each bar is one idle period between drives, however "
+                      "long it lasted. Watts is the average draw; periods "
+                      "with no fresh data (car asleep) show as no data.")
     else:
         trend_note = ""
     trip_month_html, trips_html = _activity_html(
@@ -2253,3 +2159,4 @@ def _ldt_str_fmt(day: str, fmt: str) -> str:
 
 if __name__ == "__main__":
     generate()
+

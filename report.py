@@ -1615,6 +1615,24 @@ def _charges_html(charges: list[dict], live: dict | None = None,
     return "".join(parts) + footnote
 
 
+def _fmt_money(v: float, decimals: int = 0) -> str:
+    """$12 / -$12 (never $-12)."""
+    s = ("$%d" if decimals == 0 else "$%." + str(decimals) + "f") % abs(v)
+    return ("-" if v < 0 else "") + s
+
+
+def _gas_subtitle(rows: list[dict]) -> str:
+    """Two-line hero subtitle: N home sessions / N DC sessions."""
+    n_home = sum(1 for r in rows if not r.get("is_dc"))
+    n_dc = sum(1 for r in rows if r.get("is_dc"))
+    parts = []
+    if n_home:
+        parts.append("%d home session%s" % (n_home, "" if n_home == 1 else "s"))
+    if n_dc:
+        parts.append("%d DC session%s" % (n_dc, "" if n_dc == 1 else "s"))
+    return "<br>".join(parts)
+
+
 def _idle_table(periods: list[dict], bad: set) -> str:
     """One row per idle period, newest first.
 

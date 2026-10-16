@@ -53,7 +53,8 @@ CREATE TABLE IF NOT EXISTS trips(
     via_lon REAL,
     via_label TEXT,
     path TEXT,
-    temp_f REAL
+    temp_f REAL,
+    drive_mode TEXT
 );
 
 CREATE TABLE IF NOT EXISTS errands(
@@ -158,7 +159,8 @@ def init():
             con.execute(
                 "ALTER TABLE trips ADD COLUMN bracketed INTEGER DEFAULT 0")
         for col in ("via_lat REAL", "via_lon REAL", "via_label TEXT",
-                    "path TEXT", "avg_mph REAL", "temp_f REAL"):
+                    "path TEXT", "avg_mph REAL", "temp_f REAL",
+                    "drive_mode TEXT"):
             name = col.split()[0]
             if name not in trip_cols:
                 con.execute(f"ALTER TABLE trips ADD COLUMN {col}")
@@ -253,8 +255,8 @@ def rebuild_derived(trips: list[dict], drains: list[dict],
             "INSERT INTO trips (start_ts, end_ts, miles, kwh_used, wh_per_mi,"
             " avg_mph, start_lat, start_lon, end_lat, end_lon, start_label,"
             " end_label, bracketed, via_lat, via_lon, via_label, path,"
-            " temp_f)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " temp_f, drive_mode)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [(t["start_ts"], t["end_ts"], t["miles"], t["kwh_used"],
               t["wh_per_mi"], t.get("avg_mph"),
               t.get("start_lat"), t.get("start_lon"),
@@ -262,7 +264,8 @@ def rebuild_derived(trips: list[dict], drains: list[dict],
               t.get("start_label"), t.get("end_label"),
               1 if t.get("bracketed") else 0,
               t.get("via_lat"), t.get("via_lon"), t.get("via_label"),
-              t.get("path"), t.get("temp_f")) for t in trips],
+              t.get("path"), t.get("temp_f"), t.get("drive_mode"))
+             for t in trips],
         )
         con.executemany(
             "INSERT INTO drains (sleep_ts, wake_ts, hours, soc_start, soc_end,"

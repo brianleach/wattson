@@ -52,6 +52,10 @@ promises. Take it, run it, break it, make it yours.
   with no fresh data show as "no data" instead of fake zeros.
 - **Stale charging fix** — charging sessions now end at the last SoC increase
   when the API reports stale charging state, killing phantom sessions.
+- **Drive-mode trip cards** — each trip now shows the drive mode beside the
+  temperature, e.g. "Everyday + Offroad" when a trip used more than one mode.
+- **Per-session paid display** — DC fast-charge rows now show the session's
+  total paid next to the saved/lost figure.
 
 ## Quick start
 

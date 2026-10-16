@@ -96,6 +96,7 @@ def fetch_state() -> tuple[dict, dict]:
         # Charge power is derived from the SoC curve in analyze.py instead.
         "power_state": _val(raw, "powerState"),
         "gear": _val(raw, "gearStatus"),
+        "drive_mode": _val(raw, "driveMode"),
         "lat": loc.get("latitude"),
         "lon": loc.get("longitude"),
         "speed": _val(raw, "gnssSpeed"),  # unit TBD from diagnostic drive

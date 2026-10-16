@@ -293,6 +293,13 @@ def _close_trip(cur: list[dict], trips: list[dict], errands: dict,
     bracketed = bool(cur[0].get("_bracket")
                      and (drive[0]["ts"] - cur[0]["ts"]) > 300)
     origin = cur[0]  # departure point: the bracket, or first in-motion fix
+    # Distinct drive modes used during the trip, in order of first appearance
+    _modes = []
+    for s in cur:
+        m = s.get("drive_mode")
+        if m and m not in _modes:
+            _modes.append(m)
+    _drive_mode = " + ".join(m.title() for m in _modes) if _modes else None
     trips.append({
         "start_ts": first["ts"], "end_ts": last["ts"],
         "miles": round(miles, 2), "kwh_used": round(kwh, 3),
@@ -306,6 +313,7 @@ def _close_trip(cur: list[dict], trips: list[dict], errands: dict,
         "end_lat": last.get("lat"), "end_lon": last.get("lon"),
         "start_label": _endpoint_label(cur, "start"),
         "end_label": _endpoint_label(cur, "end"),
+        "drive_mode": _drive_mode,
         **_via_point(cur, origin),
         # True GPS path (bracket included) for the map, not just endpoints.
         "path": json.dumps([[s["lat"], s["lon"]] for s in cur

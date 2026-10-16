@@ -1198,6 +1198,8 @@ def _activity_day_data(trips: list[dict], errands: list[dict],
                 + (f'<span title="ambient temperature at departure">'
                    f'<b>{t["temp_f"]:.0f}</b> &deg;F</span>'
                    if t.get("temp_f") is not None else "")
+                + (f'<span title="drive mode"><b>{_esc(t["drive_mode"])}</b></span>'
+                   if t.get("drive_mode") else "")
                 + f'</div></div>')
         if err:
             rows.append(
@@ -1548,12 +1550,13 @@ def _charge_row_html(c: dict, scale: float, open_: bool,
             _cls3 = "green" if _save3 >= 0 else "amber"
             _verb3 = "saved" if _save3 >= 0 else "lost"
             savings_bit = ('<span><b class="%s">$%.2f</b> %s '
-                           '<span class="dim">($%.2f/gal, $%.2f/kWh)</span> '
+                           '<span class="dim">($%.2f paid &middot; $%.2f/gal, '
+                           '$%.2f/kWh)</span> '
                            '<a href="#" onclick="event.stopPropagation();'
                            'openCostModal(%d, %.2f, %d);return false;" '
                            'style="color:#7ed321;font-size:12px">edit</a></span>'
-                           % (_cls3, abs(_save3), _verb3, _gp_val, _dc_rate,
-                              c["id"], _dc_rate, c["start_ts"]))
+                           % (_cls3, abs(_save3), _verb3, _ev_c3, _gp_val,
+                              _dc_rate, c["id"], _dc_rate, c["start_ts"]))
         else:
             savings_bit = ('<span><a href="#" onclick="event.stopPropagation();'
                            'openCostModal(%d, 0, %d);return false;" '

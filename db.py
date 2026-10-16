@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS snapshots(
     geo_label TEXT,
     odometer REAL,
     cloud_online INTEGER,
-    cloud_sync_ts INTEGER
+    cloud_sync_ts INTEGER,
+    drive_mode TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_snap_ts ON snapshots(ts);
 
@@ -146,7 +147,8 @@ def init():
                      con.execute("PRAGMA table_info(snapshots)").fetchall()}
         if "speed" not in snap_cols:
             con.execute("ALTER TABLE snapshots ADD COLUMN speed REAL")
-        for col in ("cloud_online INTEGER", "cloud_sync_ts INTEGER"):
+        for col in ("cloud_online INTEGER", "cloud_sync_ts INTEGER",
+                    "drive_mode TEXT"):
             name = col.split()[0]
             if name not in snap_cols:
                 con.execute(f"ALTER TABLE snapshots ADD COLUMN {col}")
@@ -184,13 +186,14 @@ def insert_snapshot(s: dict) -> None:
             """INSERT INTO snapshots
                (ts, soc, capacity_kwh, range_mi, charger_state, charge_port,
                 power_kw, power_state, gear, lat, lon, speed, geo_label, odometer,
-                cloud_online, cloud_sync_ts)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                cloud_online, cloud_sync_ts, drive_mode)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (s["ts"], s.get("soc"), s.get("capacity_kwh"), s.get("range_mi"),
              s.get("charger_state"), s.get("charge_port"), s.get("power_kw"),
              s.get("power_state"), s.get("gear"),
              s.get("lat"), s.get("lon"), s.get("speed"), s.get("geo_label"),
-             s.get("odometer"), s.get("cloud_online"), s.get("cloud_sync_ts")),
+             s.get("odometer"), s.get("cloud_online"), s.get("cloud_sync_ts"),
+             s.get("drive_mode")),
         )
 
 

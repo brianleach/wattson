@@ -34,28 +34,8 @@ promises. Take it, run it, break it, make it yours.
 
 ## Recent updates
 
-- **Fuel savings vs gas** (Oct 4, 2026) — lifetime and per-session savings against a gas
-  SUV, priced at each charge day's AAA gas price. Home sessions count
-  automatically; DC fast-charge costs are entered by hand (click **? add
-  cost** on the charging-log row).
-- **Clickable hero cards** (Oct 4, 2026) — the top stats are clickable now and jump to their detail sections.
-- **Savings breakdown table** (Oct 4, 2026) — every session with AC/DC type, kWh, EV
-  cost, and gas equivalent.
-- **Section navigation** (Oct 4, 2026) — sticky nav with scrollspy that follows you
-  down the page.
-- **Optional dashboard login** (Oct 11, 2026) — set `WATTSON_DASHBOARD_TOKEN` to
-  password-protect your dashboard (handy if you're exposing it through a
-  tunnel). Unset by default, everything works as before. Contributed by
-  @brianleach.
-- **Phantom drain rework** (Oct 14, 2026) — idle drain is now measured between actual drives
-  (not a fixed overnight window), with watts as the primary metric. Periods
-  with no fresh data show as "no data" instead of fake zeros.
-- **Stale charging fix** (Oct 14, 2026) — charging sessions now end at the last SoC increase
-  when the API reports stale charging state, killing phantom sessions.
-- **Drive-mode trip cards** (Oct 15, 2026) — each trip now shows the drive mode beside the
-  temperature, e.g. "Everyday + Offroad" when a trip used more than one mode.
-- **Per-session paid display** (Oct 15, 2026) — DC fast-charge rows now show the session's
-  total paid next to the saved/lost figure.
+See [CHANGELOG.md](CHANGELOG.md) for the full release history. Latest:
+**drive-mode trip cards** and **per-session paid display** (0.4.0).
 
 ## Quick start
 

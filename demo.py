@@ -127,6 +127,9 @@ class Sim:
         self.snaps = []
         self.rng = random.Random(42)
         self.day_index = 0
+        # Drive mode persists like the real car; trips aggregate every
+        # distinct mode seen, so a mid-drive switch shows as "Everyday + X".
+        self.drive_mode = "everyday"
 
     def cap_kwh(self):
         # Slight pack degradation over the demo window (for the trend chart)
@@ -151,9 +154,12 @@ class Sim:
             "odometer": round(self.odo_m, 1),
             "cloud_online": cloud_online,
             "cloud_sync_ts": int(self.ts),
+            "drive_mode": self.drive_mode,
         })
 
-    def drive_to(self, key):
+    def drive_to(self, key, mode_switch=None):
+        """Drive to a place. mode_switch=(fraction, mode) changes drive mode
+        partway through, e.g. (0.5, "offroad") for the second half."""
         label, tlat, tlon = PLACES[key]
         dist = haversine_mi((self.lat, self.lon), (tlat, tlon))
         if dist < 0.05:
@@ -164,6 +170,8 @@ class Sim:
         flat, flon = self.lat, self.lon
         for i in range(1, steps + 1):
             f = i / steps
+            if mode_switch and f >= mode_switch[0]:
+                self.drive_mode = mode_switch[1]
             # Slight route wobble so maps don't look laser-straight
             wob = math.sin(f * math.pi) * 0.004
             self.lat = flat + (tlat - flat) * f + wob * self.rng.uniform(-1, 1)
@@ -296,7 +304,14 @@ def build(out_dir: Path, days: int):
                 # Skip zero-distance "drive" from home at day start
                 _, plat, plon = PLACES[key]
                 if haversine_mi((sim.lat, sim.lon), (plat, plon)) > 0.05:
-                    sim.drive_to(key)
+                    if key == "griffith":
+                        # Showcase: switch to Offroad halfway up to the
+                        # observatory, so one trip card reads
+                        # "Everyday + Offroad".
+                        sim.drive_to(key, mode_switch=(0.5, "offroad"))
+                    else:
+                        sim.drive_to(key)
+                    sim.drive_mode = "everyday"
             if dwell_min > 0:
                 sim.dwell(dwell_min, PLACES[key][0])
         # Night
@@ -345,10 +360,11 @@ def main():
             """INSERT INTO snapshots (ts, soc, capacity_kwh, range_mi,
                charger_state, charge_port, power_kw, power_state, gear,
                lat, lon, speed, geo_label, odometer, cloud_online,
-               cloud_sync_ts)
+               cloud_sync_ts, drive_mode)
                VALUES (:ts, :soc, :capacity_kwh, :range_mi, :charger_state,
                :charge_port, :power_kw, :power_state, :gear, :lat, :lon,
-               :speed, :geo_label, :odometer, :cloud_online, :cloud_sync_ts)""",
+               :speed, :geo_label, :odometer, :cloud_online, :cloud_sync_ts,
+               :drive_mode)""",
             sim.snaps)
     print(f"inserted {len(sim.snaps)} snapshots")
 

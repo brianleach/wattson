@@ -610,8 +610,7 @@ table.drain tr:last-child td,table.ctab tr:last-child td{border-bottom:0}
     <a href="#charging">Charging</a>
     <a href="#savings">Savings</a>
   </div>
-  <div class="nav-updated">__DEMOPILL__<span>Updated __UPDATED__<span
-    id="poll-age" data-ts="__UPDATED_TS__"></span></span></div>
+  <div class="nav-updated">__DEMOPILL__<span>Updated __UPDATED____POLLAGE__</span></div>
 </div></nav>
 <div class="wrap">
 
@@ -2185,6 +2184,8 @@ def generate() -> None:
         "__DEMOPILL__": demopill,
         "__UPDATED__": _fmt_ts(latest.get("ts", now)),
         "__UPDATED_TS__": str(latest.get("ts", "")),
+        "__POLLAGE__": ('<span id="poll-age" data-ts="' + str(latest.get("ts", "")) + '"></span>'
+                        if not os.environ.get("WATTSON_DEMO") else ""),
         "__RANGE__": f"{rng:.0f} mi" if rng else "-",
         "__CARTAG__": car_tag,
         "__SOC__": f"{soc:.0f}%" if soc is not None else "-",
@@ -2233,4 +2234,5 @@ def _ldt_str_fmt(day: str, fmt: str) -> str:
 
 if __name__ == "__main__":
     generate()
+
 

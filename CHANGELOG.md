@@ -5,8 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
 ## [0.5.0] - 2026-10-19
 ### Added
 - Last-poll age beside Updated: the dashboard now shows a relative age
@@ -63,5 +61,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   banner, so you can explore the dashboard without a car.
 - PII protection: pre-commit hook plus a GitHub Actions scan on every push,
   so personal data never lands in the public repo.
+
 
 

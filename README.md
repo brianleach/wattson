@@ -24,13 +24,17 @@ promises. Take it, run it, break it, make it yours.
 
 ## What it does
 
-- **Per-trip efficiency**, every drive with mi/kWh, energy used, and a route map
+- **Per-trip efficiency**, every drive with mi/kWh, energy used, drive mode,
+  and a route map
 - **Charging log**, sessions with kWh added, your real home electricity cost,
-  and charge curves
-- **Overnight drain tracking**, multi-night vampire-drain trends
+  charge curves, and CSV export
+- **Phantom drain tracking**, idle drain measured between actual drives with
+  watts as the primary metric
 - **Fuel savings vs gas**, per-session and lifetime savings against a gas
-  SUV, priced at each charge day's AAA gas price
+  SUV, priced at each charge day's AAA gas price, with transparent assumptions
 - **Drive history**, the record Rivian never kept
+- **Optional dashboard login**, password-protect your dashboard when exposing
+  it through a tunnel
 
 ## Recent updates
 
@@ -193,5 +197,6 @@ it forward: keep it open, keep it fun.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
 
 

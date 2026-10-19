@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Last-poll age beside Updated: the dashboard now shows a relative age
+  (e.g. "5 min ago") next to the absolute timestamp, refreshing each minute
+  without polling the vehicle. Contributed by @shanselman.
+- Savings transparency: the savings section now shows which unpriced DC
+  sessions are excluded from the total and states the MPG and fallback
+  gas-price assumptions. Contributed by @shanselman.
+### Fixed
+- Mobile charging-cost entry: decimal keyboard hint and 44px tap targets for
+  cost actions on phones. Contributed by @shanselman.
+- Idle-drain tables on narrow screens: wrapped in a horizontal scroll
+  container so wide content is not clipped. Contributed by @shanselman.
+- Section navigation on phones: section links now show in a horizontally
+  scrollable mobile row, with scrollspy kept working and the fixed header
+  measured dynamically when jumping to a section. Contributed by @shanselman.
 
 ## [0.4.0] - 2026-10-15
 ### Added
@@ -46,3 +61,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   banner, so you can explore the dashboard without a car.
 - PII protection: pre-commit hook plus a GitHub Actions scan on every push,
   so personal data never lands in the public repo.
+

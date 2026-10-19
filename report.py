@@ -1665,9 +1665,10 @@ def _idle_table(periods: list[dict], bad: set) -> str:
             f"<td>{int(o.get('wake_count') or 0)}</td></tr>")
     note = ('<p class="note"><span class="warn">*</span> unusually high vs '
             'baseline.</p>' if bad else '')
-    return ('<table class="drain"><tr><th>Idle period</th><th>Duration</th>'
+    return ('<div style="overflow-x:auto"><table class="drain">'
+            '<tr><th>Idle period</th><th>Duration</th>'
             '<th>Avg draw</th><th>Lost</th><th>Wake-ups</th></tr>'
-            + "".join(rows) + "</table>" + note)
+            + "".join(rows) + "</table></div>" + note)
 
 
 # ---------------------------------------------------------------- generate

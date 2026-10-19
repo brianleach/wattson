@@ -380,6 +380,14 @@ def main():
             "UPDATE charges SET user_cost_per_kwh = 0.48 "
             "WHERE charge_type = 'DC fast'")
 
+    # Freshen the latest snapshot timestamp so the demo shows a recent
+    # "last poll" time instead of the synthetic data's fixed end time.
+    import time as _time
+    with connect() as con:
+        con.execute(
+            "UPDATE snapshots SET ts = ? WHERE ts = (SELECT MAX(ts) FROM snapshots)",
+            (int(_time.time()) - 180,))
+
     from report import generate
     generate()
 
@@ -392,3 +400,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

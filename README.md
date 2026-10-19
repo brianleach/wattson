@@ -35,7 +35,8 @@ promises. Take it, run it, break it, make it yours.
 ## Recent updates
 
 See [CHANGELOG.md](CHANGELOG.md) for the full release history. Latest:
-**drive-mode trip cards** and **per-session paid display** (0.4.0).
+**CSV export** for charging history, **mobile UX improvements**, and **savings
+transparency** (0.6.0).
 
 ## Quick start
 
@@ -192,4 +193,5 @@ it forward: keep it open, keep it fun.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
 

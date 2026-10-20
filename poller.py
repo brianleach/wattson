@@ -159,6 +159,20 @@ def main() -> None:
     insert_snapshot(snap)
     insert_raw_snapshot(snap["ts"], raw)
 
+    # Tire pressure: awake-only Parallax grab, at most once per hour.
+    # Awake = cloud_online==1 (power/gear/speed are always null on the R2).
+    # Fail-soft: a tire grab must never break or slow the poll loop.
+    try:
+        if snap.get("cloud_online") == 1:
+            import crypto
+            import tires
+            from db import connect
+            with connect() as con:
+                tires.maybe_fetch_tires(
+                    con, crypto.unseal(TOKENS_PATH.read_bytes()))
+    except Exception:
+        pass
+
     import analyze
     trips, drains, charges, errands = analyze.derive()
 
@@ -295,6 +309,20 @@ def burst_main(minutes: float = 48, interval: float = 120,
                 snap, raw = fetch_state()
                 insert_snapshot(snap)
                 insert_raw_snapshot(snap["ts"], raw)
+                # Tire pressure: awake-only Parallax grab, at most once per
+                # hour. Awake = cloud_online==1 (power/gear/speed are
+                # always null on the R2). Fail-soft: a tire grab must never break or slow the
+                # poll loop.
+                try:
+                    if snap.get("cloud_online") == 1:
+                        import crypto
+                        import tires
+                        from db import connect
+                        with connect() as con:
+                            tires.maybe_fetch_tires(
+                                con, crypto.unseal(TOKENS_PATH.read_bytes()))
+                except Exception:
+                    pass
                 last_snap = snap
                 polls += 1
                 print(f"burst poll {polls} soc={snap.get('soc')} "

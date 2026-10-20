@@ -206,9 +206,10 @@ def derive() -> tuple[list[dict], list[dict], list[dict], list[dict]]:
     if cur:
         runs.append(cur)
 
+    fresh = _fresh_points(snaps)
     for run in runs:
-        _drain_from_run(run, drains)
         _charges_from_run(run, charges)
+    _drains_from_trips(snaps, trips, runs, fresh, drains)
 
     errand_rows = [{"day": day, "drives": e["drives"],
                     "miles": round(e["miles"], 2),
@@ -322,69 +323,146 @@ def _close_trip(cur: list[dict], trips: list[dict], errands: dict,
     })
 
 
-def _drain_from_run(run: list[dict], drains: list[dict]) -> None:
-    a, b = run[0], run[-1]
-    hours = (b["ts"] - a["ts"]) / 3600.0
-    if hours * 3600 < DRAIN_MIN_GAP or a.get("soc") is None or b.get("soc") is None:
+def _fresh_points(snaps: list[dict]) -> list[tuple[int, dict]]:
+    """Unique cloud-synced data points: (sync_ts, snapshot), time sorted.
+
+    Rivian's cloud replays the last synced vehicle state while the car
+    sleeps, so most snapshots are echoes of one sync. A snapshot carries
+    new information only when its cloud_sync_ts advances. Those sync
+    points are the only honest anchors for measuring drain.
+    """
+    by_sync: dict[int, dict] = {}
+    for s in snaps:
+        st = s.get("cloud_sync_ts")
+        if st is None or s.get("soc") is None:
+            continue
+        by_sync[st] = s  # replays share the sync; values are identical
+    return sorted(by_sync.items())
+
+
+
+def _drains_from_trips(snaps: list[dict], trips: list[dict],
+                       runs: list[list[dict]],
+                       fresh: list[tuple[int, dict]],
+                       drains: list[dict]) -> None:
+    """Build drain spans from drive boundaries.
+
+    A span runs from one drive's end to the next drive's start. Parked
+    runs alone cannot define spans: the car can wake mid-park (app
+    check, software update, preconditioning) without driving, and a
+    wake must not close the span; only a drive does. The trailing span
+    is open when the car currently sits in a parked run.
+    """
+    if not trips or not snaps:
         return
-    if (b["soc"] or 0) > (a["soc"] or 0):
-        return  # it charged while parked, not a drain
-    cap = _capacity(run)
-    kwh = max(0.0, (a["soc"] - b["soc"]) / 100.0 * cap)
-    # Split the first hour after parking (cooldown: car still awake, thermal
-    # systems settling, higher draw) from steady-state deep sleep. The split
-    # point is the snapshot nearest the 1-hour mark.
-    cd_kwh, cd_watts, st_kwh, st_watts, st_hours = kwh, None, None, None, None
-    if hours > 1.0 and len(run) >= 3:
-        target = a["ts"] + 3600
-        mid = min(run[1:-1], key=lambda s: abs(s["ts"] - target))
-        if mid["ts"] > a["ts"] and mid["ts"] < b["ts"] \
-                and mid.get("soc") is not None:
-            cd_hours = (mid["ts"] - a["ts"]) / 3600.0
-            st_hours = (b["ts"] - mid["ts"]) / 3600.0
-            cd_kwh = max(0.0, (a["soc"] - mid["soc"]) / 100.0 * cap)
-            st_kwh = max(0.0, (mid["soc"] - b["soc"]) / 100.0 * cap)
-            cd_watts = round(cd_kwh * 1000 / cd_hours, 1) if cd_hours else None
-            st_watts = round(st_kwh * 1000 / st_hours, 1) if st_hours else None
-    # Observed wake-ups from the SoC curve. The R2 always reports
-    # power_state=None, so power transitions are blind; instead count
-    # episodes of consecutive SoC drops between nearby snapshots. Slow
-    # steady drain (flat pairs between drops) does not count, only bursts.
-    # Tiny unlock cycles that burn <0.15% may still slip through.
-    wakes = 0
-    ep_drop = 0.0
-    in_ep = False
-    for p, s_ in zip(run, run[1:]):
-        if p.get("soc") is None or s_.get("soc") is None:
-            continue
-        if s_["ts"] - p["ts"] > 2700:  # >45 min gap: do not bridge
-            if in_ep and ep_drop >= 0.15:
-                wakes += 1
-            in_ep, ep_drop = False, 0.0
-            continue
-        if p["soc"] - s_["soc"] >= 0.1:
-            in_ep = True
-            ep_drop += p["soc"] - s_["soc"]
-        else:
-            if in_ep and ep_drop >= 0.15:
-                wakes += 1
-            in_ep, ep_drop = False, 0.0
-    if in_ep and ep_drop >= 0.15:
-        wakes += 1
-    drains.append({
-        "sleep_ts": a["ts"], "wake_ts": b["ts"],
-        "wake_count": wakes,
-        "hours": round(hours, 2),
-        "soc_start": a["soc"], "soc_end": b["soc"],
-        "kwh_lost": round(kwh, 3),
-        "watts_avg": round(kwh * 1000 / hours, 1) if hours else 0,
-        "cd_kwh": round(cd_kwh, 3),
-        "cd_watts": cd_watts,
-        "steady_kwh": round(st_kwh, 3) if st_kwh is not None else None,
-        "steady_watts": st_watts,
-        "steady_hours": round(st_hours, 2) if st_hours else None,
-        "range_start": a.get("range_mi"), "range_end": b.get("range_mi"),
-    })
+    currently_parked = bool(runs) and runs[-1][-1]["ts"] == snaps[-1]["ts"]
+    spans = []
+    for i, tr in enumerate(trips):
+        t0 = tr["end_ts"]
+        if i + 1 < len(trips):
+            spans.append((t0, trips[i + 1]["start_ts"], False))
+        elif currently_parked:
+            spans.append((t0, snaps[-1]["ts"], True))
+    for t0, t1, is_open in spans:
+        span_snaps = [s for s in snaps if t0 <= s["ts"] <= t1]
+        _drain_span(t0, t1, span_snaps, fresh, is_open, drains)
+
+
+
+def _drain_span(t0: int, t1: int, span_snaps: list[dict],
+                fresh: list[tuple[int, dict]], is_open: bool,
+                drains: list[dict]) -> None:
+    """One parked span (last drive ended -> next drive started).
+
+    Drain is measured between fresh cloud-sync anchors only: the car's
+    last report at/just after parking (start anchor) and its first
+    report at/just before the next drive (end anchor). Poll timestamps
+    inside the span are mostly stale replays and are never used as
+    measurement endpoints; fresh syncs that happen mid-park (the car
+    woke but did not drive) are not endpoints either. Spans where the
+    car was plugged in are kept but carry no rate: the car tops itself
+    off, so "drain" is not measurable. The still-open span (car parked
+    now) has no end anchor by definition and is flagged open_span.
+    """
+    park_hours = (t1 - t0) / 3600.0
+    if park_hours * 3600 < DRAIN_MIN_GAP:
+        return
+    plugged = any((s.get("charger_state") or "") in
+                  ("charging_active", "charging_complete",
+                   "charging_scheduled", "charging_user_stopped")
+                  for s in span_snaps)
+    row = {
+        "sleep_ts": t0, "wake_ts": t1, "wake_count": 0,
+        "hours": round(park_hours, 2),
+        "soc_start": None, "soc_end": None,
+        "kwh_lost": None, "watts_avg": None,
+        "cd_kwh": None, "cd_watts": None,
+        "steady_kwh": None, "steady_watts": None, "steady_hours": None,
+        "range_start": None, "range_end": None,
+        "anchor_start_ts": None, "anchor_end_ts": None,
+        "pct_per_day": None,
+        "plugged_in": 1 if plugged else 0,
+        "approx": 0, "measured": 0, "open_span": 1 if is_open else 0,
+    }
+    # Start anchor: last fresh sync in [park - 2h, park + 15min].
+    start = None
+    for st, s in fresh:
+        if st > t0 + 900:
+            break
+        if st >= t0 - 2 * 3600:
+            start = (st, s)
+    if start is not None:
+        row["anchor_start_ts"] = start[0]
+        row["soc_start"] = start[1].get("soc")
+        row["range_start"] = start[1].get("range_mi")
+    if is_open:
+        drains.append(row)
+        return
+    # End anchor: first fresh sync at/just before the next drive starts.
+    end = None
+    if start is not None:
+        for st, s in fresh:
+            if st > t1 + 6 * 3600:
+                break
+            if st >= t1 - 900 and st > start[0]:
+                end = (st, s)
+                break
+    if end is not None:
+        row["anchor_end_ts"] = end[0]
+        row["soc_end"] = end[1].get("soc")
+        row["range_end"] = end[1].get("range_mi")
+    if plugged or start is None or end is None:
+        drains.append(row)
+        return
+    hours = (end[0] - start[0]) / 3600.0
+    if hours <= 0:
+        drains.append(row)
+        return
+    d_soc = (start[1].get("soc") or 0) - (end[1].get("soc") or 0)
+    if d_soc < -0.05:
+        # Battery gained charge while parked: it was plugged in, even if
+        # no charging state was caught between polls. Not a drain span.
+        row["plugged_in"] = 1
+        drains.append(row)
+        return
+    if d_soc < 0:
+        # Sub-step upward recalibration: call it zero, at resolution edge.
+        d_soc = 0.0
+        row["approx"] = 1
+    cap = _capacity(span_snaps)
+    kwh = d_soc / 100.0 * cap
+    row["hours"] = round(hours, 2)
+    row["kwh_lost"] = round(kwh, 3)
+    row["watts_avg"] = round(kwh * 1000 / hours, 1)
+    row["pct_per_day"] = round(d_soc / (hours / 24.0), 2)
+    if d_soc <= 0.3:
+        # Drop is within a few gauge steps (0.1% each): the rate is real
+        # but coarse. Report marks these with a ~.
+        row["approx"] = 1
+    row["measured"] = 1
+    drains.append(row)
+
+
 
 
 def _charges_from_run(run: list[dict], charges: list[dict]) -> None:
@@ -480,14 +558,14 @@ def _close_charge(seg: list[dict], charges: list[dict]) -> None:
 
 
 def drain_baseline(drains: list[dict]):
-    """Median idle draw and the set of abnormally high nights.
+    """Median idle draw and the set of abnormally high periods.
 
-    Uses steady-state watts (post cooldown hour) when available, since the
-    first hour after parking runs hotter and isn't comparable across nights.
-    Needs a few nights before the baseline means anything.
+    Uses anchor-measured average watts only; plugged-in and unmeasured
+    periods never enter the baseline. Needs a few periods before the
+    baseline means anything.
     """
     def _w(d):
-        return d.get("steady_watts") or d.get("watts_avg")
+        return d.get("watts_avg") if d.get("measured") else None
     watts = sorted(w for w in (_w(d) for d in drains) if w)
     if len(watts) < 3:
         return None, set()
@@ -499,7 +577,7 @@ def drain_baseline(drains: list[dict]):
 
 # ---------------------------------------------------------------- 24h activity
 
-# Activity-bar states for the daily strip:
+# Activity-bar states for the daily strip (colors decided with Andy):
 # moving = orange, charging = purple, parked = green (awake, responding),
 # sleep = dark green (deep sleep: polls succeed but the car sends no updates),
 # unknown = dark gray (poll gap/outage, or before we stored the cloud state).
@@ -508,6 +586,7 @@ ACT_CHARGING = "charging"
 ACT_PARKED = "parked"
 ACT_SLEEP = "sleep"
 ACT_UNKNOWN = "unknown"
+ACT_CLIMATE = "climate"
 
 ACTIVITY_GAP_S = 15 * 60         # a poll gap longer than this is unknown...
 ACTIVITY_BRIDGE_MAX_S = 6 * 60 * 60  # cap for awake-parked gaps and the tail

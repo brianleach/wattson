@@ -98,7 +98,14 @@ CREATE TABLE IF NOT EXISTS drains(
     steady_hours REAL,
     range_start REAL,
     range_end REAL,
-    wake_count INTEGER
+    wake_count INTEGER,
+    anchor_start_ts INTEGER,
+    anchor_end_ts INTEGER,
+    pct_per_day REAL,
+    plugged_in INTEGER,
+    approx INTEGER,
+    measured INTEGER,
+    open_span INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS places(
@@ -141,7 +148,9 @@ def init():
         cols = {r["name"] for r in
                 con.execute("PRAGMA table_info(drains)").fetchall()}
         for col in ("cd_kwh", "cd_watts", "steady_kwh", "steady_watts",
-                    "steady_hours", "wake_count"):
+                    "steady_hours", "wake_count", "anchor_start_ts",
+                    "anchor_end_ts", "pct_per_day", "plugged_in",
+                    "approx", "measured", "open_span"):
             if col not in cols:
                 con.execute(f"ALTER TABLE drains ADD COLUMN {col} REAL")
         snap_cols = {r["name"] for r in
@@ -270,14 +279,19 @@ def rebuild_derived(trips: list[dict], drains: list[dict],
         con.executemany(
             "INSERT INTO drains (sleep_ts, wake_ts, hours, soc_start, soc_end,"
             " kwh_lost, watts_avg, cd_kwh, cd_watts, steady_kwh, steady_watts,"
-            " steady_hours, range_start, range_end, wake_count)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " steady_hours, range_start, range_end, wake_count,"
+            " anchor_start_ts, anchor_end_ts, pct_per_day, plugged_in,"
+            " approx, measured, open_span)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [(d["sleep_ts"], d["wake_ts"], d["hours"], d["soc_start"],
               d["soc_end"], d["kwh_lost"], d["watts_avg"], d.get("cd_kwh"),
               d.get("cd_watts"), d.get("steady_kwh"), d.get("steady_watts"),
               d.get("steady_hours"),
               d.get("range_start"), d.get("range_end"),
-              d.get("wake_count", 0)) for d in drains],
+              d.get("wake_count", 0), d.get("anchor_start_ts"),
+              d.get("anchor_end_ts"), d.get("pct_per_day"),
+              d.get("plugged_in", 0), d.get("approx", 0),
+              d.get("measured", 0), d.get("open_span", 0)) for d in drains],
         )
         con.executemany(
             "INSERT INTO charges (start_ts, end_ts, minutes, soc_start,"

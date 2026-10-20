@@ -73,6 +73,32 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(state["fl"], 2)
         self.assertEqual(state["fr"], 0)
 
+    def test_empty_message_stores_nothing(self):
+        # Seed FL in crit (2.30 bar = 33.4 PSI), then an empty message:
+        # no new row, and the crit level must NOT be cleared.
+        tires.store_and_evaluate(self.con, decoded(fl=2.30), now=1700000000)
+        summary = tires.store_and_evaluate(self.con, {}, now=1700003600)
+        self.assertFalse(summary["stored"])
+        rows = self.con.execute(
+            "SELECT COUNT(*) FROM tire_readings").fetchone()[0]
+        self.assertEqual(rows, 1)
+        state = dict(self.con.execute(
+            "SELECT tire, low FROM tire_alert_state"))
+        self.assertEqual(state["fl"], 2)
+
+    def test_partial_message_keeps_previous_corners(self):
+        tires.store_and_evaluate(self.con, decoded(), now=1700000000)
+        # Only FR reports this time, with a new value (2.50 bar).
+        summary = tires.store_and_evaluate(self.con, {
+            "tirePressureFrontRight": 2.50,
+            "tirePressureStatusFrontRight": "OK",
+        }, now=1700003600)
+        self.assertTrue(summary["stored"])
+        row = self.con.execute(
+            "SELECT fl, fr, rl, rr FROM tire_readings"
+            " ORDER BY ts DESC LIMIT 1").fetchone()
+        self.assertEqual(row, (2.90, 2.50, 2.90, 2.90))
+
     def test_no_alert_events_table_is_created(self):
         tires.store_and_evaluate(self.con, decoded(fl=2.30), now=1700000000)
         tables = {r[0] for r in self.con.execute(

@@ -163,6 +163,22 @@ def store_and_evaluate(con, decoded: dict, now: int | None = None) -> dict:
         row[pos] = decoded.get(f"tirePressure{key}")
         row[f"{pos}_status"] = decoded.get(f"tirePressureStatus{key}")
 
+    # Guard against empty messages: a decoded message with no pressures
+    # at all is not a reading. Storing it would zero every warning level
+    # and, via latest_reading, block retry grabs for an hour, so keep
+    # the previous reading untouched instead (summary has stored=False).
+    if all(row[pos] is None for pos in POSITIONS):
+        return {"ts": now, "psis": {pos: None for pos in POSITIONS},
+                "levels": {}, "stored": False}
+    # Partial message: keep the previous value for any corner that did
+    # not report, rather than overwriting a good reading with a blank.
+    prev = latest_reading(con)
+    if prev is not None:
+        for pos in POSITIONS:
+            if row[pos] is None:
+                row[pos] = prev[pos]
+                row[f"{pos}_status"] = prev[f"{pos}_status"]
+
     con.execute(
         "INSERT OR REPLACE INTO tire_readings"
         " (ts, fl, fr, rl, rr, fl_status, fr_status, rl_status, rr_status)"
@@ -184,7 +200,7 @@ def store_and_evaluate(con, decoded: dict, now: int | None = None) -> dict:
         )
 
     con.commit()
-    return {"ts": now, "psis": psis, "levels": levels}
+    return {"ts": now, "psis": psis, "levels": levels, "stored": True}
 
 
 def maybe_fetch_tires(con, tokens: dict) -> None:
@@ -206,6 +222,8 @@ def maybe_fetch_tires(con, tokens: dict) -> None:
         if not decoded:
             return
         summary = store_and_evaluate(con, decoded, now=now)
+        if not summary.get("stored"):
+            return
         psis = {k: (None if v is None else round(v, 1))
                 for k, v in summary["psis"].items()}
         print(f"tires: {psis} levels={summary['levels']}")

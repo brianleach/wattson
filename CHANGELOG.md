@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (over-inflation; amber only, there is no red tier on the high side).
   Target pressure is configurable with `RIVIAN_TIRE_TARGET_PSI`
   (default 42; use the cold pressure on your door-jamb placard).
+### Fixed
+- Empty or partial tire messages no longer overwrite good data: a
+  message with no pressures stores nothing and leaves warning levels
+  (and the hourly grab schedule) untouched, and a corner that did not
+  report keeps its previous value instead of going blank.
 ### Changed
 - Hero stats grid: now a 2x2 grid at all widths (was three across on
   desktop, stacking to one column on phones), making room for the

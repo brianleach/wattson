@@ -37,14 +37,16 @@ def main() -> None:
                                               second=0, microsecond=0)
     yest_6pm = today_8am - timedelta(hours=14)
     cands = [d for d in drains
-             if d["sleep_ts"] < today_8am.timestamp()
+             if d.get("measured") and not d.get("open_span")
+             and d["sleep_ts"] < today_8am.timestamp()
              and d["wake_ts"] > yest_6pm.timestamp()]
     if cands:
         last_night = max(cands, key=lambda d: d["sleep_ts"])
 
     first_night = None
-    if drains:
-        first_night = min(drains, key=lambda d: d["sleep_ts"])
+    measured_drains = [d for d in drains if d.get("measured")]
+    if measured_drains:
+        first_night = min(measured_drains, key=lambda d: d["sleep_ts"])
 
     test = {}
     test_path = Path(__file__).resolve().parent / "proximity_test.json"
@@ -71,16 +73,12 @@ def main() -> None:
         rs, re_ = d.get("range_start"), d.get("range_end")
         mi_lost = (f"{rs - re_:.0f} mi of range "
                    f"({rs:.0f} -> {re_:.0f} mi)" if rs and re_ else None)
-        steady = (f", steady {d['steady_watts']:.0f} W after cooldown"
-                  if d.get("steady_watts") is not None else "")
-        wakes = int(d.get("wake_count") or 0)
         lines.append(
             f"Last night: {d['kwh_lost']:.2f} kWh lost over {d['hours']:.1f}h "
             f"({d['soc_start']:.0f}% -> {d['soc_end']:.0f}%)"
             + (f", {mi_lost}" if mi_lost else "") +
-            f", avg draw {d['watts_avg']:.0f} W{steady}.")
-        lines.append(f"Observed wake-ups overnight: {wakes} "
-                     f"(brief, low-energy wake-ups may not register).")
+            f", avg draw {d['watts_avg']:.0f} W "
+            f"({d['pct_per_day']:.1f}%/day).")
         plabel = proximity_label(d)
         if plabel:
             lines.append(plabel)

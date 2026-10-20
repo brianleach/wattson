@@ -11,8 +11,9 @@ Data semantics:
   Validated against the car's own trip meter; a ~4% over-read
   vs the car remains unexplained.
 - Averages always state their sample size.
-- Drain spans are measured between fresh cloud-sync anchors (first/
-  last sync of each park), not poll times, and bounded by drives.
+- Phantom drain is measured between fresh cloud-sync anchors (the car's
+  last report after parking, its first on waking). Plugged-in periods
+  are not measurable: the car tops itself off while plugged in.
 """
 import base64
 import html
@@ -36,7 +37,6 @@ from db import connect
 GREEN = "#7ed321"
 AMBER = "#f5a623"
 RED = "#ff5a52"
-_MED = "#94a3b8"
 
 CHARGE_TARGET_PCT = 90.0  # daily charge limit (100 for trips)
 # HOME_KWH_RATE lives in config.py (set RIVIAN_HOME_KWH_RATE in .env).
@@ -1682,81 +1682,100 @@ def _gas_subtitle(rows: list[dict], unpriced_dc: int = 0) -> str:
 
 
 def _idle_table(periods: list[dict], bad: set) -> str:
-    """Period-by-period drain table (newest first).
+    """One row per idle period, newest first.
 
-    Measured rows show watts and %/day; plugged-in spans carry no rate
-    (the car tops itself off while plugged in); spans with no fresh
-    anchor pair show no data.
+    Mirrors the chart bars 1:1. Rates are measured between fresh
+    cloud-sync anchors (see _idle_history); plugged-in periods show no
+    rate because the car can top itself off. The * marker uses the same
+    1.6x-median baseline as the chart's red bars. A ~ marks periods
+    whose battery drop is at the edge of what the gauge can resolve.
     """
+    if not periods:
+        return '<p class="dim">No idle periods measured yet.</p>'
     rows = []
     for o in reversed(periods):
-        cls = ' style="color:#f87171"' if o["id"] in bad else ""
+        warn = ' <span class="warn">*</span>' if o["id"] in bad else ""
+        label = o["label"] + warn
         if o["plugged"]:
-            rate = "<td>-</td><td>-</td>"
-            lost = f"{o['kwh']:.2f} kWh &middot; {o['drop']:.1f}%"
-        elif o["no_data"]:
-            rate = '<td colspan="2" class="dim">no data</td>'
-            lost = f"{o['kwh']:.2f} kWh &middot; {o['drop']:.1f}%"
+            label += ' <span class="dim">(plugged in)</span>'
+        batt = (f"{o['soc_start']:.0f}% &rarr; {o['soc_end']:.0f}%"
+                if o["soc_start"] is not None and o["soc_end"] is not None
+                else "-")
+        if o["measured"]:
+            tilde = "~" if o["approx"] else ""
+            lost = f"{o['kwh']:.2f} kWh &bull; {o['soc_drop']:.1f}%"
+            watts_txt = f"{tilde}{o['watts']:.0f} W"
+            pct_txt = f"{tilde}{o['pct_day']:.1f}%"
+        elif o["plugged"]:
+            lost = watts_txt = pct_txt = "-"
         else:
-            approx = "~" if o["approx"] else ""
-            rate = (f"<td>{approx}{o['watts']:.0f} W</td>"
-                    f"<td>{approx}{o['pct_day']:.1f}%/day</td>")
-            lost = f"{o['kwh']:.2f} kWh &middot; {o['drop']:.1f}%"
-        plug = ' <span class="dim">(plugged in)</span>' if o["plugged"] else ""
+            lost = watts_txt = pct_txt = "no data"
         rows.append(
-            f"<tr><td{cls}>{o['label']}</td><td>{o['hours']:.1f}h</td>"
-            f"<td>{o['soc_start']:.0f}% &rarr; {o['soc_end']:.0f}%{plug}</td>"
-            f"<td>{lost}</td>{rate}</tr>")
-    return ('<table class="tbl"><tr><th>Idle period</th><th>Duration</th>'
-            "<th>Battery</th><th>Lost</th><th>Avg draw</th>"
-            "<th>%/day</th></tr>" + "".join(rows) + "</table>")
+            f"<tr><td>{label}</td>"
+            f"<td>{o['hours']:.1f} h</td>"
+            f"<td>{batt}</td>"
+            f"<td>{lost}</td>"
+            f"<td>{watts_txt}</td>"
+            f"<td>{pct_txt}</td></tr>")
+    note = ('<p class="note"><span class="warn">*</span> unusually high vs '
+            'baseline.</p>' if bad else '')
+    return ('<div style="overflow-x:auto"><table class="drain">'
+            '<tr><th>Idle period</th><th>Duration</th>'
+            '<th>Battery</th><th>Lost</th><th>Avg draw</th>'
+            '<th>%/day</th></tr>'
+            + "".join(rows) + "</table></div>" + note)
+
 
 
 def _idle_history(drains: list[dict], snapshots) -> tuple[list[dict], dict | None]:
-    """Display rows for anchor-measured drain spans, plus the open park.
+    """Idle periods between drives, oldest first, plus the open park.
 
-    A span is measured only when it has fresh cloud-sync anchors on
-    both ends and the car was not plugged in. The still-open park (the
-    car is parked right now) is returned separately: it never headlines
-    the tile, since no closing anchor exists yet.
+    Drain rows come from analyze.py, measured between fresh cloud-sync
+    anchors (the car's last report after parking, its first report on
+    waking). Periods that were plugged in, or that lack both anchors,
+    carry no rate. The still-open park (car parked right now) is
+    returned separately: it has no end anchor yet, so it cannot be
+    measured, only noted.
     """
-    periods: list[dict] = []
+    out = []
     open_park = None
     for d in drains:
-        first = _fmt_ts(d["anchor_start_ts"] or d["sleep_ts"])
-        last = _fmt_ts(d["anchor_end_ts"] or d["wake_ts"])
         if d.get("open_span"):
-            open_park = {"since": first, "soc": d["soc_start"],
-                         "label": f"{first} \u2192 now"}
+            open_park = {"since_ts": d["sleep_ts"], "soc": d.get("soc_start")}
             continue
-        if d.get("plugged_in"):
-            o = {"id": d["id"], "label": f"{first} \u2192 {last}",
-                 "day": _day(d["anchor_start_ts"] or d["sleep_ts"]),
-                 "hours": d["hours"], "soc_start": d["soc_start"],
-                 "soc_end": d["soc_end"], "kwh": d["kwh_lost"] or 0.0,
-                 "drop": (d["soc_start"] or 0) - (d["soc_end"] or 0),
-                 "plugged": True, "no_data": False, "watts": 0.0,
-                 "pct_day": 0.0, "approx": False}
-        elif not d.get("measured"):
-            o = {"id": d["id"], "label": f"{first} \u2192 {last}",
-                 "day": _day(d["anchor_start_ts"] or d["sleep_ts"]),
-                 "hours": d["hours"], "soc_start": d["soc_start"],
-                 "soc_end": d["soc_end"], "kwh": d["kwh_lost"] or 0.0,
-                 "drop": (d["soc_start"] or 0) - (d["soc_end"] or 0),
-                 "plugged": False, "no_data": True, "watts": 0.0,
-                 "pct_day": 0.0, "approx": False}
+        t1, t2 = d["sleep_ts"], d["wake_ts"]
+        measured = bool(d.get("measured"))
+        plugged = bool(d.get("plugged_in"))
+        a1, a2 = d.get("anchor_start_ts"), d.get("anchor_end_ts")
+        w1, w2 = (a1, a2) if (measured and a1 and a2) else (t1, t2)
+        d1, d2 = _ldt(t1), _ldt(t2)
+        if d1.date() == d2.date():
+            label = d1.strftime("%b %d")
         else:
-            o = {"id": d["id"], "label": f"{first} \u2192 {last}",
-                 "day": _day(d["anchor_start_ts"] or d["sleep_ts"]),
-                 "hours": d["hours"], "soc_start": d["soc_start"],
-                 "soc_end": d["soc_end"], "kwh": d["kwh_lost"] or 0.0,
-                 "drop": (d["soc_start"] or 0) - (d["soc_end"] or 0),
-                 "plugged": False, "no_data": False,
-                 "watts": d["watts_avg"] or 0.0,
-                 "pct_day": d["pct_per_day"] or 0.0,
-                 "approx": bool(d.get("approx"))}
-        periods.append(o)
-    return periods, open_park
+            label = f"{d1.strftime('%b %d')}-{d2.strftime('%d')}"
+        s0, s1 = d.get("soc_start"), d.get("soc_end")
+        out.append({
+            "id": t1,  # unique key for abnormal-period flagging
+            "day": d2.strftime("%Y-%m-%d"),  # for heat-strip positioning
+            "label": label,
+            "hours": round(d.get("hours") or 0, 1),
+            "kwh": round(d.get("kwh_lost") or 0, 3),
+            "watts": round(d.get("watts_avg") or 0, 1),
+            "pct_day": d.get("pct_per_day"),
+            "soc_start": s0, "soc_end": s1,
+            "soc_drop": (round(s0 - s1, 1)
+                         if s0 is not None and s1 is not None else None),
+            "measured": measured,
+            "plugged": plugged,
+            "approx": bool(d.get("approx")),
+            "no_data": not measured,
+            "window": f"{_fmt_ts(w1)} \u2192 {_fmt_ts(w2)}",
+            "t1": t1, "t2": t2,
+            "wake_count": 0,
+        })
+    return out, open_park
+
+
 
 
 def _tire_tile_html(con, now):
@@ -2081,24 +2100,25 @@ def generate() -> None:
         '<div class="s">range \u00f7 battery %</div></div>'
         '</div>' + pack_chart + '</div>')
 
-    # Phantom drain tile: headline the last COMPLETED span as %/day.
-    # The open park has no closing anchor yet, so no rate exists for
-    # it. Watts and kWh live in the Battery section table.
+    # Phantom drain hero: the most recent COMPLETED idle period between
+    # drives, measured between fresh cloud-sync anchors. The tile never
+    # headlines the still-open park (no end anchor yet); when the car is
+    # parked, that shows as a quiet "parked since" line instead.
     idles, open_park = _idle_history(drains, snapshots)
-    _meas = [o for o in idles if not o["no_data"] and not o["plugged"]]
-    if _meas:
-        _o = _meas[-1]
-        _approx = "~" if _o["approx"] else ""
+    measured_list = [o for o in idles if o["measured"]]
+    if measured_list:
+        ov = measured_list[-1]
+        tilde = "~" if ov["approx"] else ""
         idle_stat = (
             '<a class="stat" href="#battery"><div class="k">Phantom drain</div>'
-            f'<div class="v amber">{_approx}{_o["pct_day"]:.1f}'
+            f'<div class="v amber">{tilde}{ov["pct_day"]:.1f}'
             '<small> %/day</small></div>'
-            f'<div class="s">{_esc(_o["label"])}</div></a>')
+            f'<div class="s">{_esc(ov["window"])}</div></a>')
     elif idles or open_park:
         idle_stat = (
             '<a class="stat" href="#battery"><div class="k">Phantom drain</div>'
             '<div class="v amber">-<small> %/day</small></div>'
-            '<div class="s">no completed park measured yet</div></a>')
+            '<div class="s">no measured period yet</div></a>')
     else:
         idle_stat = (
             '<a class="stat" href="#battery"><div class="k">Phantom drain</div>'
@@ -2125,16 +2145,16 @@ def generate() -> None:
         med = wvals[len(wvals) // 2] if wvals else 0
         bad = {o["id"] for o in measured
                if len(measured) >= 3 and med > 0 and o["watts"] > 1.6 * med}
-        n_plugged = sum(1 for o in periods if o.get("plugged"))
+        n_plugged = sum(1 for o in periods if o["plugged"])
         n_nodata = len(periods) - len(measured) - n_plugged
-        avg_pd = (sum(o["pct_day"] * o["hours"] for o in measured) / tot_hrs
-                  if tot_hrs else 0)
-        avg = (f"Average <b class='amber'>{avg_w:.0f} W "
-               f"({avg_pd:.1f}%/day, {tot_kwh:.2f} kWh total)</b> "
+        tot_drop = sum(o["soc_drop"] or 0 for o in measured)
+        avg_pct = tot_drop / (tot_hrs / 24.0) if tot_hrs else 0
+        avg = (f"Average <b class='amber'>{avg_w:.0f} W</b> "
+               f"({avg_pct:.1f}%/day, {tot_kwh:.2f} kWh total) "
                f"across {len(measured)} idle period"
                f"{'s' if len(measured) != 1 else ''}")
         if n_plugged:
-            avg += f" &bull; {n_plugged} plugged in"
+            avg += f" &bull; {n_plugged} plugged in (not measured)"
         if n_nodata:
             avg += f" &bull; {n_nodata} with no data"
         avg += "."
@@ -2143,27 +2163,18 @@ def generate() -> None:
                     "after a few idle periods.")
         cols = [RED if o["id"] in bad else AMBER for o in periods]
         thin = len(periods) > 16
-
-        def _lab(o):
-            if o.get("plugged"):
-                return "plugged in"
-            if o["no_data"]:
-                return "no data"
-            return f"{'~' if o['approx'] else ''}{o['watts']:.0f} W"
-
-        labels = [_lab(o) for o in periods]
-        sublabels = ["" if (o["no_data"] or o.get("plugged"))
-                     else f"{o['hours']:.0f}h" for o in periods]
-        vals = [(o["label"], 0 if (o["no_data"] or o.get("plugged"))
-                 else o["pct_day"],
-                 _MED if o.get("plugged") else c)
-                for o, c in zip(periods, cols)]
+        labels = [("plugged in" if o["plugged"] else
+                   "no data" if o["no_data"] else f"{o['watts']:.0f} W")
+                  for o in periods]
+        sublabels = ["" if o["no_data"] else f"{o['hours']:.0f}h"
+                     for o in periods]
         if style == "strip":
             chart = _heat_strip(periods, bad)
         else:
-            bars = _bars(vals, labels=labels, sublabels=sublabels,
-                         thin=thin, y_unit="%/day",
-                         ref_value=None)
+            bars = _bars(
+                [(o["label"], o["watts"], c) for o, c in zip(periods, cols)],
+                labels=labels, sublabels=sublabels, thin=thin,
+                y_unit="W", ref_value=med if med > 0 else None)
             chart = bars
         table = _idle_table(periods, bad)
         details = (
@@ -2199,17 +2210,19 @@ def generate() -> None:
         trend_bars = ("No idle periods measured yet. "
                       "Drive the car and park it to fill this in.")
     trend_toggle = ""
-    if open_park:
-        parked_line = (f"Parked now &bull; since {open_park['since']} "
-                       f"&bull; last reading {open_park['soc']:.0f}%")
-        trend_bars = f'<div class="sub">{parked_line}</div>' + trend_bars
     if trend_ranges:
-        trend_note = ("Each bar is one idle period between drives, "
-                      "measured between the car's first and last cloud "
-                      "sync of the park. Bars show %/day; ~ marks a small "
-                      "drop close to the gauge's own step size.")
+        trend_note = ("Each bar is one park between drives, measured from "
+                      "the car's last report after parking to its first "
+                      "report on waking. Plugged-in periods are not "
+                      "measured: the car tops itself off.")
     else:
         trend_note = ""
+    if open_park:
+        soc_bit = (f" &bull; last reading {open_park['soc']:.0f}%"
+                   if open_park.get("soc") is not None else "")
+        trend_bars = (f'<div class="sub">Parked now &bull; since '
+                      f'{_fmt_ts(open_park["since_ts"])}{soc_bit}</div>'
+                      + trend_bars)
     trip_month_html, trips_html = _activity_html(
         trips, errands, activity_segments())
 

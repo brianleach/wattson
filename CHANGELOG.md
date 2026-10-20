@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-10-19
+### Fixed
+- Home Screen icon contrast: the Apple touch icon now renders in Rivian
+  yellow on an opaque charcoal tile for better contrast in light and dark
+  appearances. Contributed by @shanselman.
+
 ## [0.6.0] - 2026-10-19
 ### Added
 - CSV export: charging history can now be exported as CSV, with UTC times,
@@ -67,6 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   banner, so you can explore the dashboard without a car.
 - PII protection: pre-commit hook plus a GitHub Actions scan on every push,
   so personal data never lands in the public repo.
+
 
 
 

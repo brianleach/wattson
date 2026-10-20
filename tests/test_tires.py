@@ -38,6 +38,14 @@ class LowLevelTests(unittest.TestCase):
         self.assertEqual(level_at(40.0, status="LOW"), 2)
         self.assertEqual(level_at(42.0, status="Warning"), 2)
 
+    def test_over_inflation_is_warn_only(self):
+        # 15% above the 42 target is 48.3: yellow above it, and never
+        # red for over-inflation alone (no crit tier on the high side).
+        for psi, expected in [(48.2, 0), (48.4, 1), (55.0, 1)]:
+            with self.subTest(psi=psi):
+                self.assertEqual(
+                    level_at(psi, siblings=(psi, psi, psi)), expected)
+
     def test_none_pressure_with_ok_status_is_fine(self):
         self.assertEqual(level_at(None), 0)
 

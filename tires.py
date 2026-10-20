@@ -29,6 +29,10 @@ LOW_CRIT_PCT = 0.20          # red at 20% below target (33.6 PSI @ 42; the
                              # tire-industry flat/inspect line, stricter
                              # than the 25% US TPMS legal floor)
 LOW_SIBLING_DELTA_PSI = 4.0  # below the median of the other three tires
+OVER_WARN_PCT = 0.15         # yellow at 15% above target (48.3 PSI @ 42).
+                             # Yellow only: no red tier for over-inflation,
+                             # since a red line would be the tire's sidewall
+                             # max, which varies by tire and is not set here.
 
 POSITIONS = ("fl", "fr", "rl", "rr")
 _LIB_KEY = {
@@ -138,6 +142,8 @@ def _low_level(status, psi, sibling_psis) -> int:
         if len(sibling_psis) >= 2:
             if psi < statistics.median(sibling_psis) - LOW_SIBLING_DELTA_PSI:
                 return 1
+        if psi > TIRE_TARGET_PSI * (1 + OVER_WARN_PCT):
+            return 1
     return 0
 
 

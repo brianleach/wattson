@@ -12,9 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only while the car is already awake, at most once an hour. A tire
   turns amber at 10% below target and red at 20% below (or when the car
   itself flags it); a tire far below its siblings also warns, as a
-  slow-leak catcher. Target pressure is configurable with
-  `RIVIAN_TIRE_TARGET_PSI` (default 42; use the cold pressure on your
-  door-jamb placard).
+  slow-leak catcher. A tire also turns amber at 15% above target
+  (over-inflation; amber only, there is no red tier on the high side).
+  Target pressure is configurable with `RIVIAN_TIRE_TARGET_PSI`
+  (default 42; use the cold pressure on your door-jamb placard).
 ### Changed
 - Hero stats grid: now a 2x2 grid at all widths (was three across on
   desktop, stacking to one column on phones), making room for the

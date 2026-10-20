@@ -473,6 +473,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",Helvetica,Arial,
   50%{opacity:1}}
 .heroloc{margin-top:14px;font-size:16px;color:var(--dim)}
 .heroloc b{color:var(--text)}
+.tire4{display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;margin-top:2px}
+.tire4 .tc{font-size:21px;font-weight:650;color:var(--text)}
+.tire4 .tc i{font-style:normal;color:var(--dim);font-size:13px;margin-right:7px}
+.tire4 .tc.warnv,.tire4 .tc.warnv i,.tire4 .tc.warnv b{color:var(--amber)}
+.tire4 .tc.lowv,.tire4 .tc.lowv i,.tire4 .tc.lowv b{color:var(--red)}
 h2.sec{font-size:32px;font-weight:750;letter-spacing:-0.8px;margin:38px 0 14px}
 .card{background:var(--card);border-radius:var(--radius);padding:22px;
   margin-bottom:14px}
@@ -481,8 +486,8 @@ h2.sec{font-size:32px;font-weight:750;letter-spacing:-0.8px;margin:38px 0 14px}
   gap:10px}
 .card .sub{color:var(--dim);font-size:14px;margin-bottom:14px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:18px}
-.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-top:18px}
-@media(max-width:560px){.grid3{grid-template-columns:1fr}}
+.grid4{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:18px}
+.grid4 .stat{min-height:172px}
 .chlive{display:flex;gap:18px;align-items:center;margin-top:6px}
 .chlive-main{flex:1 1 0;min-width:0}
 .chlive-side{flex:0 0 172px;display:flex;flex-direction:column;gap:12px}
@@ -627,7 +632,7 @@ table.drain tr:last-child td,table.ctab tr:last-child td{border-bottom:0}
   </div>
   <div class="battbar__BATTCHG__"><div style="width:__SOCPCT__%">__BOLT__</div></div>
   <div class="heroloc">__LOCATION__</div>
-  <div class="grid3">
+  <div class="grid4">
     <a class="stat" href="#savings"><div class="k">Lifetime savings vs gas</div>
       <div class="v green">__GASSAVE__</div>
       <div class="s">__GASSAVESUB__</div></a>
@@ -635,6 +640,7 @@ table.drain tr:last-child td,table.ctab tr:last-child td{border-bottom:0}
     <a class="stat" href="#daily"><div class="k">Lifetime efficiency</div>
       <div class="v green">__LIFEMI__<small> mi/kWh</small></div>
       <div class="s">__LIFESUB__</div></a>
+    __TIRETILE__
   </div>
 </div>
 
@@ -1758,6 +1764,53 @@ def _idle_history(drains: list[dict], snapshots) -> list[dict]:
     return out
 
 
+def _tire_tile_html(con, now):
+    """Tires tile for the hero 2x2 grid. Footprint layout, quiet when fine."""
+    try:
+        import tires as _tires
+        _tires.init_tire_tables(con)
+        row = con.execute(
+            "SELECT ts, fl, fr, rl, rr FROM tire_readings"
+            " ORDER BY ts DESC LIMIT 1").fetchone()
+        flags = dict(con.execute(
+            "SELECT tire, low FROM tire_alert_state"))
+    except Exception:
+        return ""
+    if row is None:
+        ts = None
+        bar = {"fl": None, "fr": None, "rl": None, "rr": None}
+    else:
+        try:
+            ts, fl, fr, rl, rr = row
+            bar = {"fl": fl, "fr": fr, "rl": rl, "rr": rr}
+        except Exception:
+            return ""
+    psi = {p: (None if bar[p] is None else bar[p] * 14.5038)
+           for p in ("fl", "fr", "rl", "rr")}
+    stale = ts is not None and (now - ts) > 24 * 3600
+
+    labels = {"fl": "FL", "fr": "FR", "rl": "RL", "rr": "RR"}
+    cells = []
+    for p in ("fl", "fr", "rl", "rr"):
+        v = psi[p]
+        txt = "%.1f" % v if v is not None else "--"
+        lvl = int(flags.get(p) or 0)
+        cls = "tc lowv" if lvl >= 2 else ("tc warnv" if lvl == 1 else "tc")
+        cells.append('<span class="%s"><i>%s</i><b>%s</b></span>'
+                     % (cls, labels[p], txt))
+    if ts is None:
+        sub = "no reading yet"
+    elif stale:
+        days = (now - ts) // 86400
+        sub = "%dd ago" % days if days >= 1 else "yesterday"
+    else:
+        sub = ""
+    sub_html = '<div class="s">%s</div>' % sub if sub else ""
+    return ('<div class="stat"><div class="k">Tires</div>'
+            '<div class="tire4">%s</div>%s</div>'
+            % ("".join(cells), sub_html))
+
+
 def generate() -> None:
     try:
         tokens = unseal(TOKENS_PATH.read_bytes())
@@ -1783,6 +1836,11 @@ def generate() -> None:
                    f'alt="{vehicle_name}">')
 
     with connect() as con:
+        try:
+            tiretile = _tire_tile_html(con, now)
+        except Exception:
+            tiretile = ""
+
         latest = con.execute(
             "SELECT * FROM snapshots ORDER BY ts DESC LIMIT 1").fetchone()
         snapshots = [dict(r) for r in con.execute(
@@ -2196,6 +2254,7 @@ def generate() -> None:
                      else ""),
         "__LOCATION__": location_html,
         "__IDLESTAT__": idle_stat,
+        "__TIRETILE__": tiretile,
         "__LIFEMI__": f"{lifetime_mpk:.2f}" if lifetime_mpk else "-",
         "__GASSAVE__": (_fmt_money(int(round(_savings_total)))
                         if _savings_rows else "-"),

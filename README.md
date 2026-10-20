@@ -30,6 +30,8 @@ promises. Take it, run it, break it, make it yours.
   charge curves, and CSV export
 - **Phantom drain tracking**, idle drain measured between actual drives with
   watts as the primary metric
+- **Tire pressure tile**, per-tire pressures in the hero grid, amber/red
+  warnings relative to your door-jamb placard pressure
 - **Fuel savings vs gas**, per-session and lifetime savings against a gas
   SUV, priced at each charge day's AAA gas price, with transparent assumptions
 - **Drive history**, the record Rivian never kept
@@ -145,6 +147,7 @@ own; nothing needs to wake up every few minutes just to check.
 |---|---|---|
 | `RIVIAN_HOME_LAT` / `RIVIAN_HOME_LON` | Yes | Home coordinates (decimal degrees), for home-charge detection |
 | `RIVIAN_HOME_KWH_RATE` | No | Your all-in $/kWh home rate, for charging cost (default `0.30`) |
+| `RIVIAN_TIRE_TARGET_PSI` | No | Target cold tire pressure in PSI from your door-jamb placard, for Tires tile warnings (default `42`) |
 | `WATTSON_TIMEZONE` | No | IANA timezone for dashboard dates/times (default `America/Los_Angeles`) |
 | `RIVIAN_VEHICLE_NAME` | No | Dashboard display name (defaults to your Rivian account name) |
 | `WATTSON_GAS_COMPARISON_MPG` | No | MPG of the gas SUV you compare against (default `25`) |

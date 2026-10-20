@@ -388,6 +388,22 @@ def main():
             "UPDATE snapshots SET ts = ? WHERE ts = (SELECT MAX(ts) FROM snapshots)",
             (int(_time.time()) - 180,))
 
+    # Synthetic tire reading (bar, as the car reports it), so the demo
+    # dashboard's Tires tile is populated: all four in the normal range
+    # (about 41.5 to 42.8 PSI), all statuses OK.
+    import tires as _tires
+    with connect() as con:
+        _tires.store_and_evaluate(con, {
+            "tirePressureFrontLeft": 2.90,
+            "tirePressureStatusFrontLeft": "OK",
+            "tirePressureFrontRight": 2.88,
+            "tirePressureStatusFrontRight": "OK",
+            "tirePressureRearLeft": 2.95,
+            "tirePressureStatusRearLeft": "OK",
+            "tirePressureRearRight": 2.86,
+            "tirePressureStatusRearRight": "OK",
+        }, now=int(_time.time()) - 180)
+
     from report import generate
     generate()
 

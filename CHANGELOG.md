@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Added
+- Tire pressure tile: the hero grid gains a Tires tile with the latest
+  per-tire pressures in a footprint layout (FL/FR over RL/RR), grabbed
+  only while the car is already awake, at most once an hour. A tire
+  turns amber at 10% below target and red at 20% below (or when the car
+  itself flags it); a tire far below its siblings also warns, as a
+  slow-leak catcher. A tire also turns amber at 15% above target
+  (over-inflation; amber only, there is no red tier on the high side).
+  Target pressure is configurable with `RIVIAN_TIRE_TARGET_PSI`
+  (default 42; use the cold pressure on your door-jamb placard).
+### Fixed
+- Empty or partial tire messages no longer overwrite good data: a
+  message with no pressures stores nothing and leaves warning levels
+  (and the hourly grab schedule) untouched, and a corner that did not
+  report keeps its previous value instead of going blank.
+### Changed
+- Hero stats grid: now a 2x2 grid at all widths (was three across on
+  desktop, stacking to one column on phones), making room for the
+  Tires tile as the fourth stat.
+
 ## [0.6.1] - 2026-10-19
 ### Fixed
 - Home Screen icon contrast: the Apple touch icon now renders in Rivian

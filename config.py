@@ -30,6 +30,11 @@ HOME_LON = float(os.environ.get("RIVIAN_HOME_LON", "nan"))
 # Home charging cost in $/kWh, all-in for your utility rate. Used for the
 # cost shown on home charging sessions.
 HOME_KWH_RATE = float(os.environ.get("RIVIAN_HOME_KWH_RATE", "0.30"))
+# Target cold tire pressure in PSI, from the tire and loading placard on
+# the driver's door jamb. The dashboard Tires tile warns relative to this
+# target: yellow at 10% below it, red at 20% below it, yellow at 15%
+# above it (over-inflation).
+TIRE_TARGET_PSI = float(os.environ.get("RIVIAN_TIRE_TARGET_PSI", "42"))
 # Display name for the dashboard hero. Falls back to the vehicle name on
 # your Rivian account, then to a generic label.
 VEHICLE_NAME = os.environ.get("RIVIAN_VEHICLE_NAME", "")

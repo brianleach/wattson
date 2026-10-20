@@ -39,8 +39,8 @@ promises. Take it, run it, break it, make it yours.
 ## Recent updates
 
 See [CHANGELOG.md](CHANGELOG.md) for the full release history. Latest:
-**CSV export** for charging history, **mobile UX improvements**, and **savings
-transparency** (0.6.0).
+**CSV export** for charging history, **mobile UX improvements**, **savings
+transparency**, and **Home Screen icon contrast fix** (0.6.1).
 
 ## Quick start
 
@@ -197,6 +197,7 @@ it forward: keep it open, keep it fun.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
 
 
 

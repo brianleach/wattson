@@ -41,8 +41,8 @@ promises. Take it, run it, break it, make it yours.
 ## Recent updates
 
 See [CHANGELOG.md](CHANGELOG.md) for the full release history. Latest:
-**CSV export** for charging history, **mobile UX improvements**, **savings
-transparency**, and **Home Screen icon contrast fix** (0.6.1).
+**Tire pressure tile** with per-tire low and over-inflation warnings,
+and a **2x2 hero grid** (0.7.0).
 
 ## Quick start
 

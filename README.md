@@ -41,8 +41,9 @@ promises. Take it, run it, break it, make it yours.
 ## Recent updates
 
 See [CHANGELOG.md](CHANGELOG.md) for the full release history. Latest:
-**Tire pressure tile** with per-tire low and over-inflation warnings,
-and a **2x2 hero grid** (0.7.0).
+**Anchor-based phantom drain**: parks are measured between the car's
+own cloud syncs, the tile headlines %/day, and plugged-in parks carry
+no rate (0.8.0).
 
 ## Quick start
 

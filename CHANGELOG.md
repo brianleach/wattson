@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-20
+### Changed
+- Phantom drain is now measured between fresh cloud-sync anchors:
+  each park between drives is measured from the car's last report
+  after parking to its first report on waking, instead of between
+  poll timestamps. While the car sleeps the cloud replays its last
+  report, so poll-based endpoints could invent drain that never
+  happened (or hide drain that did). The hero tile headlines the
+  most recent completed park as %/day; a park still in progress is
+  never headlined and shows as a "Parked now" line instead.
+  Plugged-in periods no longer get a drain rate (the car tops
+  itself off while plugged in); they are marked in the breakdown
+  table and counted separately in the trend.
+### Removed
+- The cooldown/steady-state split and the per-period wake-up
+  counts. Wake-ups were never measurable from cloud data at this
+  polling cadence, and the split rested on the poll timestamps the
+  new measurement no longer trusts.
+### Fixed
+- Morning summary: a plugged-in night no longer breaks the
+  summary, it picks a measured night, and it reports the same
+  %/day figure as the dashboard.
+
 ## [0.7.0] - 2026-10-20
 ### Added
 - Tire pressure tile: the hero grid gains a Tires tile with the latest

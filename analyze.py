@@ -10,6 +10,8 @@ peak power.
 
 Drains: long parked gaps (sleep) with measurable SoC loss.
 """
+from __future__ import annotations
+
 import math
 from collections import defaultdict
 from datetime import datetime
@@ -206,10 +208,10 @@ def derive() -> tuple[list[dict], list[dict], list[dict], list[dict]]:
     if cur:
         runs.append(cur)
 
-    fresh = _fresh_points(snaps)
+    fresh, fresh_first = _fresh_sync_points(snaps)
     for run in runs:
         _charges_from_run(run, charges)
-    _drains_from_trips(snaps, trips, runs, fresh, drains)
+    _drains_from_trips(snaps, trips, runs, fresh, fresh_first, drains)
 
     errand_rows = [{"day": day, "drives": e["drives"],
                     "miles": round(e["miles"], 2),
@@ -323,27 +325,48 @@ def _close_trip(cur: list[dict], trips: list[dict], errands: dict,
     })
 
 
-def _fresh_points(snaps: list[dict]) -> list[tuple[int, dict]]:
-    """Unique cloud-synced data points: (sync_ts, snapshot), time sorted.
+def _fresh_sync_points(snaps: list[dict]) -> tuple[list[tuple[int, dict]],
+                                                  list[tuple[int, dict]]]:
+    """Unique cloud-synced data points: (last_points, first_points).
 
     Rivian's cloud replays the last synced vehicle state while the car
     sleeps, so most snapshots are echoes of one sync. A snapshot carries
     new information only when its cloud_sync_ts advances. Those sync
     points are the only honest anchors for measuring drain.
+
+    Each sync contributes two edges, because the value under one sync
+    keeps moving while the car is awake (state updates keep arriving
+    under the same sync timestamp):
+
+    - last_points: the LAST poll seen under each sync, its settled end
+      state. A span's START anchor wants this: the car as it was left
+      parked. (For a sync that spans a sleep, the replayed value never
+      changes, so last == first.)
+    - first_points: the FIRST poll seen under each sync, the car's
+      state at the moment the sync advanced. A span's END anchor must
+      use this edge: the last poll under the wake sync can already
+      include the next drive, or several short ones (say a wake sync's
+      value falls 72.4 -> 71.5 across errands before the sync advances
+      again), and booking that drop as parked drain is exactly the bug
+      this split exists to prevent.
     """
-    by_sync: dict[int, dict] = {}
+    first_by_sync: dict[int, dict] = {}
+    last_by_sync: dict[int, dict] = {}
     for s in snaps:
         st = s.get("cloud_sync_ts")
         if st is None or s.get("soc") is None:
             continue
-        by_sync[st] = s  # replays share the sync; values are identical
-    return sorted(by_sync.items())
+        if st not in first_by_sync:
+            first_by_sync[st] = s  # first poll under the sync wins
+        last_by_sync[st] = s  # last poll under the sync wins
+    return sorted(last_by_sync.items()), sorted(first_by_sync.items())
 
 
 
 def _drains_from_trips(snaps: list[dict], trips: list[dict],
                        runs: list[list[dict]],
                        fresh: list[tuple[int, dict]],
+                       fresh_first: list[tuple[int, dict]],
                        drains: list[dict]) -> None:
     """Build drain spans from drive boundaries.
 
@@ -365,12 +388,13 @@ def _drains_from_trips(snaps: list[dict], trips: list[dict],
             spans.append((t0, snaps[-1]["ts"], True))
     for t0, t1, is_open in spans:
         span_snaps = [s for s in snaps if t0 <= s["ts"] <= t1]
-        _drain_span(t0, t1, span_snaps, fresh, is_open, drains)
+        _drain_span(t0, t1, span_snaps, fresh, fresh_first, is_open, drains)
 
 
 
 def _drain_span(t0: int, t1: int, span_snaps: list[dict],
-                fresh: list[tuple[int, dict]], is_open: bool,
+                fresh: list[tuple[int, dict]],
+                fresh_first: list[tuple[int, dict]], is_open: bool,
                 drains: list[dict]) -> None:
     """One parked span (last drive ended -> next drive started).
 
@@ -418,10 +442,14 @@ def _drain_span(t0: int, t1: int, span_snaps: list[dict],
     if is_open:
         drains.append(row)
         return
-    # End anchor: first fresh sync at/just before the next drive starts.
+    # End anchor: first fresh sync at/just before the next drive starts,
+    # read at its FIRST poll (fresh_first). Later polls under the wake
+    # sync can already include that drive (the value keeps updating under
+    # one sync timestamp while the car is awake), which would book
+    # driving energy as parked drain.
     end = None
     if start is not None:
-        for st, s in fresh:
+        for st, s in fresh_first:
             if st > t1 + 6 * 3600:
                 break
             if st >= t1 - 900 and st > start[0]:
@@ -439,9 +467,10 @@ def _drain_span(t0: int, t1: int, span_snaps: list[dict],
         drains.append(row)
         return
     d_soc = (start[1].get("soc") or 0) - (end[1].get("soc") or 0)
-    if d_soc < -0.05:
-        # Battery gained charge while parked: it was plugged in, even if
-        # no charging state was caught between polls. Not a drain span.
+    if d_soc < -0.15:
+        # Battery gained real charge while parked (past one gauge step
+        # of wake recalibration): it was plugged in, even if no charging
+        # state was caught between polls. Not a drain span.
         row["plugged_in"] = 1
         drains.append(row)
         return

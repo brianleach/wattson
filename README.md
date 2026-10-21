@@ -41,9 +41,9 @@ promises. Take it, run it, break it, make it yours.
 ## Recent updates
 
 See [CHANGELOG.md](CHANGELOG.md) for the full release history. Latest:
-**Anchor-based phantom drain**: parks are measured between the car's
-own cloud syncs, the tile headlines %/day, and plugged-in parks carry
-no rate (0.8.0).
+**Phantom drain anchor fix**: a park's closing reading now uses the
+first report under the car's wake sync, so driving that follows a
+wake can no longer be booked as parked drain (0.8.1).
 
 ## Quick start
 

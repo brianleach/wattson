@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-21
+### Fixed
+- Phantom drain could book driving energy as parked drain. A park's
+  closing reading used the last report filed under the car's wake
+  sync, but the car keeps updating its reported battery level under
+  that one sync timestamp while it is awake, so the closing reading
+  could already include the next drive, or several short ones; in
+  the worst case a short park between errands measured hundreds of
+  watts. The closing reading now uses the first report under the
+  wake sync, the car's state before any driving under that sync.
+  Parks whose closing sync arrived cleanly are unchanged.
+- A battery gain of one gauge step (0.1%) at a park's closing
+  reading is now treated as recalibration noise (reported as an
+  approximate zero) instead of evidence that the car was plugged
+  in; the plugged-in backstop now requires a gain past 0.15%.
+
 ## [0.8.0] - 2026-10-20
 ### Changed
 - Phantom drain is now measured between fresh cloud-sync anchors:

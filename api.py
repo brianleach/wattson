@@ -443,11 +443,11 @@ def nav_send():
         return jsonify({"ok": False, "error": "A round trip needs a Home"
                         " place: save Home in the Rivian app, or set home"
                         " coordinates in .env."}), 400
-    if nav.send_in_progress():
-        return jsonify({"ok": False, "error": "A send is already in"
-                        " progress. Wait for the car to confirm it."}), 409
     job_id = nav.start_send_job(place, mode, round_trip,
                                 home, {"lat": car["lat"], "lon": car["lon"]})
+    if job_id is None:
+        return jsonify({"ok": False, "error": "A send is already in"
+                        " progress. Wait for the car to confirm it."}), 409
     return jsonify({"ok": True, "job_id": job_id})
 
 

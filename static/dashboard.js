@@ -214,20 +214,20 @@ var scrollRaf=null;(function(){var ease=function(t){return t<.5?4*t*t*t:1-Math.p
 ;
 
 /* DC fast-charging cost entry modal. */
-var _costChargeId=null;var _costStartTs=null;function openCostModal(chargeId,currentVal,startTs){_costChargeId=chargeId;_costStartTs=(startTs===undefined||startTs===null)?'':startTs;document.getElementById('costinput').value=((currentVal===null||currentVal===undefined)?'':currentVal);document.getElementById('costmodal').style.display='flex';document.getElementById('costinput').focus();}function closeCostModal(){document.getElementById('costmodal').style.display='none';_costChargeId=null;}function saveCost(){var v=parseFloat(document.getElementById('costinput').value);if(v===null||v===undefined||isNaN(v)||v<0){alert('Enter a valid price');return;}document.getElementById('form_charge_id').value=_costChargeId;document.getElementById('form_start_ts').value=_costStartTs;document.getElementById('form_cost_per_kwh').value=v;document.getElementById('costform').submit();}function clearCost(){if(!confirm('Clear the entered cost for this session?'))return;document.getElementById('form_charge_id').value=_costChargeId;document.getElementById('form_start_ts').value=_costStartTs;document.getElementById('form_cost_per_kwh').value='';document.getElementById('costform').submit();}document.getElementById('costmodal').addEventListener('click',function(e){if(e.target===this)closeCostModal();});document.addEventListener('keydown',function(e){if(e.key==='Escape'){var m=document.getElementById('costmodal');if(m&&m.style.display!=='none')closeCostModal();}});
+var _costChargeId=null;var _costStartTs=null;var _costOpener=null;function openCostModal(chargeId,currentVal,startTs){_costChargeId=chargeId;_costStartTs=(startTs===undefined||startTs===null)?'':startTs;document.getElementById('costinput').value=((currentVal===null||currentVal===undefined)?'':currentVal);_costOpener=document.activeElement;document.getElementById('costmodal').classList.remove('hidden');document.getElementById('costinput').focus();}function closeCostModal(){document.getElementById('costmodal').classList.add('hidden');_costChargeId=null;if(_costOpener&&_costOpener.focus)_costOpener.focus();}function saveCost(){var v=parseFloat(document.getElementById('costinput').value);if(v===null||v===undefined||isNaN(v)||v<0){alert('Enter a valid price');return;}document.getElementById('form_charge_id').value=_costChargeId;document.getElementById('form_start_ts').value=_costStartTs;document.getElementById('form_cost_per_kwh').value=v;document.getElementById('costform').submit();}function clearCost(){if(!confirm('Clear the entered cost for this session?'))return;document.getElementById('form_charge_id').value=_costChargeId;document.getElementById('form_start_ts').value=_costStartTs;document.getElementById('form_cost_per_kwh').value='';document.getElementById('costform').submit();}document.getElementById('costmodal').addEventListener('click',function(e){if(e.target===this)closeCostModal();});document.addEventListener('keydown',function(e){if(e.key==='Escape'){var m=document.getElementById('costmodal');if(m&&!m.classList.contains('hidden'))closeCostModal();}});
 
 ;
 
 /* Send destination modal. */
 var _navCar = null, _navWhMi = 380, _navSaved = [], _navListArr = [],
     _navPlace = null, _navSelIdx = null, _navMode = 'direct', _navRound = false,
-    _navJob = null, _navTimer = null, _navSearchTimer = null, _navTab = 'rec';
+    _navJob = null, _navTimer = null, _navTab = 'rec';
 var _navUsableKwh = 87.9;  // refreshed from /api/nav/state (config.USABLE_KWH)
 var NAV_ROAD_FACTOR = 1.3;  // straight-line distance to road estimate
 function openNavModal() {
   _navPlace = null; _navSelIdx = null; _navMode = 'direct'; _navRound = false; _navJob = null;
   _navTab = 'rec';
-  document.getElementById('navmodal').style.display = 'flex';
+  document.getElementById('navmodal').classList.remove('hidden');
   document.getElementById('navq').value = '';
   navUpdateClear();
   navParkSel();
@@ -249,29 +249,27 @@ function openNavModal() {
   document.getElementById('navq').focus();
 }
 function closeNavModal() {
-  document.getElementById('navmodal').style.display = 'none';
+  document.getElementById('navmodal').classList.add('hidden');
+  var b = document.getElementById('navopen');
+  if (b) b.focus();
   if (_navTimer) { clearInterval(_navTimer); _navTimer = null; }
 }
 function navSetSend(enabled, label) {
   var b = document.getElementById('navsendbtn');
-  b.disabled = !enabled; b.style.opacity = enabled ? '1' : '.45';
+  b.disabled = !enabled; b.classList.toggle('btn-off', !enabled);
   if (label) b.textContent = label;
 }
 function navSegBtn(el, active) {
   if (!el) return;
-  el.style.background = active ? '#f2f2f2' : '#24262a';
-  el.style.color = active ? '#111' : '#9aa0a6';
-  el.style.borderColor = active ? '#f2f2f2' : '#33373d';
-  el.style.fontWeight = active ? '600' : '500';
+  el.classList.toggle('npill-on', active);
 }
 function navUpdateClear() {
   var b = document.getElementById('navclear');
   var q = document.getElementById('navq');
-  if (b && q) b.style.display = q.value ? 'block' : 'none';
+  if (b && q) b.classList.toggle('hidden', !q.value);
 }
 function navClearSearch() {
   var q = document.getElementById('navq');
-  if (_navSearchTimer) { clearTimeout(_navSearchTimer); _navSearchTimer = null; }
   if (q) q.value = '';
   navUpdateClear();
   navShowBrowse();
@@ -281,33 +279,31 @@ function navParkSel() {
   var sel = document.getElementById('navsel');
   var home = document.getElementById('navselhome');
   if (sel && home && sel.parentNode !== home) home.appendChild(sel);
-  if (sel) sel.style.display = 'none';
+  if (sel) sel.classList.add('hidden');
   navClearRowSel();
 }
 function navClearRowSel() {
   var rows = document.querySelectorAll('#navlist .navrow');
   for (var r = 0; r < rows.length; r++) {
-    rows[r].style.borderColor = '#2c2f34';
-    rows[r].style.background = 'transparent';
+    rows[r].classList.remove('navrow-sel');
   }
 }
 function navExpandSel(row) {
   var sel = document.getElementById('navsel');
   if (!sel) return;
   if (row) row.appendChild(sel);
-  sel.style.display = 'block';
+  sel.classList.remove('hidden');
   navClearRowSel();
   if (row) {
-    row.style.borderColor = '#7ed321';
-    row.style.background = 'rgba(126,211,33,.07)';
+    row.classList.add('navrow-sel');
     setTimeout(function() { row.scrollIntoView({block: 'start', behavior: 'smooth'}); }, 40);
   }
 }
 function navRow(p, i) {
   var dist = (p.distance_mi !== undefined && p.distance_mi !== null) ? ' &middot; ' + p.distance_mi + ' mi' : '';
-  return '<div class="navrow" onclick="navPick(' + i + ', this)" style="padding:9px 10px;border:1px solid #2c2f34;border-radius:10px;margin-bottom:8px;cursor:pointer;background:transparent">' +
-    '<div style="font-weight:600">' + navEsc(p.name) + '</div>' +
-    '<div style="color:#a1a1a6;font-size:13px;margin-top:4px;line-height:1.4">' + navEsc(p.address || '') + dist + '</div></div>';
+  return '<div class="navrow" onclick="navPick(' + i + ', this)">' +
+    '<div class="navrow-name">' + navEsc(p.name) + '</div>' +
+    '<div class="navrow-addr">' + navEsc(p.address || '') + dist + '</div></div>';
 }
 function navEsc(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -318,7 +314,7 @@ function navSetTab(t) {
 }
 function navShowBrowse() {
   navParkSel(); _navPlace = null; _navSelIdx = null; navSetSend(false, 'Send');
-  document.getElementById('navtabs').style.display = 'flex';
+  document.getElementById('navtabs').classList.remove('hidden');
   navSegBtn(document.getElementById('navtabrec'), _navTab === 'rec');
   navSegBtn(document.getElementById('navtabfav'), _navTab === 'fav');
   var seen = {}, out = [];
@@ -336,30 +332,33 @@ function navShowBrowse() {
 }
 document.getElementById('navq').addEventListener('input', function() {
   navUpdateClear();
-  var q = this.value.trim();
-  if (_navSearchTimer) clearTimeout(_navSearchTimer);
+  if (!this.value.trim()) navShowBrowse();
+});
+document.getElementById('navq').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') { e.preventDefault(); navDoSearch(); }
+});
+function navDoSearch() {
+  var q = document.getElementById('navq').value.trim();
   if (!q) { navShowBrowse(); return; }
-  document.getElementById('navtabs').style.display = 'none';
+  document.getElementById('navtabs').classList.add('hidden');
   if (q.indexOf('http') === 0 && (q.indexOf('maps') >= 0 || q.indexOf('telenav') >= 0 || q.indexOf('goo.gl') >= 0)) {
     _navListArr = [{name: 'Map link', address: q, url: q, lat: null, lon: null, place_id: null}];
     navParkSel(); _navPlace = null; _navSelIdx = null; navSetSend(false, 'Send');
-    document.getElementById('navlist').innerHTML = '<p class="sub" style="margin:0 0 8px">Link</p>' + navRow(_navListArr[0], 0);
+    document.getElementById('navlist').innerHTML = '<p class="sub m0008">Link</p>' + navRow(_navListArr[0], 0);
     return;
   }
   if (q.length < 3) return;
-  _navSearchTimer = setTimeout(function() {
-    navParkSel(); _navPlace = null; _navSelIdx = null; navSetSend(false, 'Send');
-    fetch('/api/nav/search?q=' + encodeURIComponent(q)).then(function(r) { return r.json(); }).then(function(j) {
-      if (!j.ok) { document.getElementById('navlist').innerHTML = '<p class="sub">' + navEsc(j.error || 'Search failed') + '</p>'; return; }
-      _navListArr = j.results || [];
-      var html = _navListArr.length ? '<p class="sub" style="margin:0 0 8px">Results</p>' : '<p class="sub">No matches. Try a street address.</p>';
-      _navListArr.forEach(function(p, i) { html += navRow(p, i); });
-      document.getElementById('navlist').innerHTML = html;
-    }).catch(function() {
-      document.getElementById('navlist').innerHTML = '<p class="sub">Search failed. Try again.</p>';
-    });
-  }, 800);
-});
+  navParkSel(); _navPlace = null; _navSelIdx = null; navSetSend(false, 'Send');
+  fetch('/api/nav/search?q=' + encodeURIComponent(q)).then(function(r) { return r.json(); }).then(function(j) {
+    if (!j.ok) { document.getElementById('navlist').innerHTML = '<p class="sub">' + navEsc(j.error || 'Search failed') + '</p>'; return; }
+    _navListArr = j.results || [];
+    var html = _navListArr.length ? '<p class="sub m0008">Results</p>' : '<p class="sub">No matches. Try a street address.</p>';
+    _navListArr.forEach(function(p, i) { html += navRow(p, i); });
+    document.getElementById('navlist').innerHTML = html;
+  }).catch(function() {
+    document.getElementById('navlist').innerHTML = '<p class="sub">Search failed. Try again.</p>';
+  });
+}
 function navPick(i, row) {
   _navPlace = _navListArr[i]; _navSelIdx = i; _navMode = 'direct'; _navRound = false;
   document.getElementById('navplan').innerHTML = '';
@@ -367,8 +366,8 @@ function navPick(i, row) {
   var img = document.getElementById('navmap');
   if (_navPlace.lat !== null && _navPlace.lat !== undefined) {
     img.src = '/api/nav/map?lat=' + _navPlace.lat + '&lon=' + _navPlace.lon;
-    img.style.display = 'block';
-  } else { img.style.display = 'none'; }
+    img.classList.remove('hidden');
+  } else { img.classList.add('hidden'); }
   navExpandSel(row);
   navSetSend(true, 'Send');
   navRenderEnergy();
@@ -393,9 +392,9 @@ function navRenderEnergy() {
   var est = navEstimate();
   if (!_navPlace || _navPlace.lat === null || _navPlace.lat === undefined) {
     line.textContent = 'The car will resolve this link. No charge estimate for links.';
-    tight.style.display = 'none'; return;
+    tight.classList.add('hidden'); return;
   }
-  if (!est) { line.textContent = ''; tight.style.display = 'none'; return; }
+  if (!est) { line.textContent = ''; tight.classList.add('hidden'); return; }
   var shown = _navRound ? est.rtArrival : est.arrival;
   line.textContent = 'About ' + Math.round(est.roadMi) + ' mi by road' +
     (_navRound ? ' each way' : '') + ". You'd arrive at about " +
@@ -404,14 +403,14 @@ function navRenderEnergy() {
   navSegBtn(ow, !_navRound);
   navSegBtn(rt, _navRound);
   if (est.arrival < 45 || est.rtArrival < 45) {
-    tight.style.display = 'block';
+    tight.classList.remove('hidden');
     var msg = document.getElementById('navtightmsg');
     var btn = document.getElementById('navplanbtn');
     if (shown < 20) {
       msg.textContent = "That's a lower arrival charge than is comfortable.";
-      btn.style.display = 'block';
-    } else { msg.textContent = ''; btn.style.display = 'none'; }
-  } else { tight.style.display = 'none'; }
+      btn.classList.remove('hidden');
+    } else { msg.textContent = ''; btn.classList.add('hidden'); }
+  } else { tight.classList.add('hidden'); }
 }
 function navSetRound(b) {
   _navRound = b; _navMode = 'direct';
@@ -489,9 +488,17 @@ function navSend() {
 document.getElementById('navmodal').addEventListener('click', function(e) {
   if (e.target === this) closeNavModal();
 });
+document.getElementById('navmodal').addEventListener('keydown', function(e) {
+  if (e.key !== 'Tab') return;
+  var f = this.querySelectorAll('button, input, [href]');
+  if (!f.length) return;
+  var first = f[0], last = f[f.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+});
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') {
     var m = document.getElementById('navmodal');
-    if (m && m.style.display !== 'none') closeNavModal();
+    if (m && !m.classList.contains('hidden')) closeNavModal();
   }
 });

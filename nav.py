@@ -428,6 +428,23 @@ class _RouteWatch:
                 return False
 
 
+def _route_fingerprint(route: dict | None):
+    """Parsed-plan fingerprint for send confirmation: destinations
+    (name, coordinates, place id) and charging stops (name,
+    minutes). A re-report of the same plan fingerprints equal even
+    when the raw report bytes differ (traffic refresh, wake
+    cycles), which is what keeps a re-report from confirming a
+    send the car may never have received."""
+    if not route:
+        return None
+    dests = tuple((d.get("name"), d.get("lat"), d.get("lon"),
+                   d.get("place_id"))
+                  for d in route.get("destinations") or [])
+    chgs = tuple((c.get("name"), c.get("minutes"))
+                 for c in route.get("chargers") or [])
+    return (dests, chgs)
+
+
 def _names(route: dict | None) -> set:
     if not route:
         return set()
@@ -452,7 +469,7 @@ async def _send_and_confirm_async(place, mode, round_trip, home, origin):
             await watch.wait_for(lambda r: True, 10)
             baseline = parse_trip_info(watch.route) if watch.route else None
             baseline_names = _names(baseline)
-            baseline_raw = watch.route
+            baseline_plan = _route_fingerprint(baseline)
             want = (place.get("name") or "").strip().lower()
 
             def confirmed(raw: bytes) -> bool:
@@ -462,10 +479,19 @@ async def _send_and_confirm_async(place, mode, round_trip, home, origin):
                 names = _names(route)
                 if names - baseline_names:
                     return True
-                # Same destination as the baseline counts only when the
-                # report itself is new (the car re-reported after our
-                # send). An untouched stale route must not confirm.
-                return bool(want and raw != baseline_raw and
+                # Same destination as the baseline counts only when
+                # the plan itself changed (different destinations,
+                # coordinates, or charging stops) and the report is
+                # about the place we sent. The car re-reports an
+                # unchanged route for other reasons (traffic refresh,
+                # wake cycle) with different raw bytes; counting one
+                # of those would falsely confirm a send the car may
+                # never have received. A re-send that reproduces the
+                # identical plan stays unconfirmed (the job re-sends
+                # once, then fails): a false negative here is safer
+                # than a false positive.
+                return bool(want and
+                            _route_fingerprint(route) != baseline_plan and
                             any(want in n or n in want for n in names if n))
 
             stops = [place] + ([home] if round_trip and home else [])
@@ -498,11 +524,17 @@ _JOBS_LOCK = threading.Lock()
 
 
 def start_send_job(place: dict, mode: str, round_trip: bool,
-                   home: dict | None, origin: dict) -> str:
+                   home: dict | None, origin: dict) -> str | None:
+    """Start a send job and return its id, or None when another
+    send is already in flight. The busy check and the job insert
+    happen under the same lock, so two sends starting at the same
+    moment cannot both get through."""
     job_id = uuid.uuid4().hex[:12]
     job = {"id": job_id, "state": "sending", "route": None, "error": None,
            "place_name": place.get("name") or "destination", "mode": mode}
     with _JOBS_LOCK:
+        if any(j.get("state") == "sending" for j in _JOBS.values()):
+            return None
         _JOBS[job_id] = job
         while len(_JOBS) > 20:
             _JOBS.pop(next(iter(_JOBS)))

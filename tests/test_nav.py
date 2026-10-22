@@ -195,6 +195,27 @@ class NavUnitTests(unittest.TestCase):
         with mock.patch.dict(nav._JOBS, {"x": {"state": "sending"}}):
             self.assertTrue(nav.send_in_progress())
 
+    def test_start_send_job_refuses_a_second_send(self):
+        with mock.patch.dict(nav._JOBS, {"x": {"state": "sending"}}):
+            self.assertIsNone(nav.start_send_job(
+                {"name": "B", "lat": 34.1, "lon": -118.1},
+                "direct", False, None, {"lat": 34.0, "lon": -118.0}))
+
+    def test_route_fingerprint(self):
+        route = {"destinations": [{"name": "A", "lat": 1.0, "lon": 2.0,
+                                   "place_id": "p"}],
+                 "chargers": [{"name": "C", "minutes": 10}]}
+        same = {"destinations": [{"name": "A", "lat": 1.0, "lon": 2.0,
+                                  "place_id": "p"}],
+                "chargers": [{"name": "C", "minutes": 10}]}
+        self.assertEqual(nav._route_fingerprint(route),
+                         nav._route_fingerprint(same))
+        changed = {"destinations": route["destinations"],
+                   "chargers": [{"name": "C", "minutes": 12}]}
+        self.assertNotEqual(nav._route_fingerprint(route),
+                            nav._route_fingerprint(changed))
+        self.assertIsNone(nav._route_fingerprint(None))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -44,7 +44,9 @@ class StaticAssetsTests(unittest.TestCase):
         self.assertNotIn("--bg:#0f0f11", html)
 
     def test_demo_dashboard_inlines_static_assets(self):
-        with mock.patch.dict(os.environ, {"WATTSON_DEMO": "1"}):
+        with mock.patch.dict(os.environ,
+                             {"WATTSON_DEMO": "1",
+                              "WATTSON_DASHBOARD_TOKEN": "sekrit"}):
             report.generate()
         html = self.output.read_text()
         self.assertIn("var _navCar", html)
@@ -52,6 +54,25 @@ class StaticAssetsTests(unittest.TestCase):
         self.assertNotIn('<script src="/dashboard.js">', html)
         self.assertNotIn(
             '<link rel="stylesheet" href="/dashboard.css">', html)
+        # The demo hides the Send destination button even with a
+        # password set.
+        self.assertNotIn('id="navopen"', html)
+
+    def test_nav_button_hidden_without_token(self):
+        with mock.patch.dict(os.environ):
+            os.environ.pop("WATTSON_DASHBOARD_TOKEN", None)
+            os.environ.pop("WATTSON_DEMO", None)
+            report.generate()
+        html = self.output.read_text()
+        self.assertNotIn('id="navopen"', html)
+
+    def test_nav_button_shown_with_token(self):
+        with mock.patch.dict(os.environ,
+                             {"WATTSON_DASHBOARD_TOKEN": "sekrit"}):
+            os.environ.pop("WATTSON_DEMO", None)
+            report.generate()
+        html = self.output.read_text()
+        self.assertIn('id="navopen"', html)
 
     def test_template_has_no_inline_style_or_script_blocks(self):
         self.assertNotIn("<style>", report.HTML_TEMPLATE)

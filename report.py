@@ -38,6 +38,7 @@ from config import (HOME_LAT, HOME_LON,
                     REPORT_PATH, TOKENS_PATH, LOCAL_TZ)
 from crypto import unseal
 from db import connect
+from dashboard_auth import token_from_env
 
 GREEN = "#7ed321"
 AMBER = "#f5a623"
@@ -404,16 +405,12 @@ def _pack_svg(series: list[tuple[str, float, float]],
         for i, (lbl, _, _) in enumerate(series)
         if i % lstep == 0 or i == n - 1)
     legend = (
-        f'<div style="display:flex;flex-wrap:wrap;gap:6px 18px;'
-        f'margin:2px 0 8px;font-size:13px;'
-        f'color:var(--dim)">'
-        f'<span><span style="display:inline-block;width:10px;height:10px;'
-        f'border-radius:5px;background:{GREEN};margin-right:6px"></span>'
+        f'<div class="legend-row">'
+        f'<span><span class="swatch dot-g"></span>'
         f'Pack capacity</span>'
-        f'<span><span style="display:inline-block;width:10px;height:10px;'
-        f'border-radius:5px;background:{AMBER};margin-right:6px"></span>'
+        f'<span><span class="swatch dot-a"></span>'
         f'Implied full range</span>'
-        + (f'<span style="color:var(--faint)">{_esc(baseline_label)}</span>'
+        + (f'<span class="faint">{_esc(baseline_label)}</span>'
            if baseline_label else "")
         + '</div>')
     return (legend +
@@ -454,8 +451,8 @@ __STYLES__</head>
       <div class="hero-odo">__ODO__</div>
     </div>
   </div>
-  <div class="battbar__BATTCHG__"><div style="width:__SOCPCT__%">__BOLT__</div></div>
-<div class="heroloc" style="display:flex;align-items:center;justify-content:space-between;gap:12px"><span style="flex:1 1 auto;min-width:0">__LOCATION__</span>__NAVBTN__</div>
+  <div class="battbar__BATTCHG__"><div style="--p:__SOCPCT__%">__BOLT__</div></div>
+<div class="heroloc row-between"><span class="flex1">__LOCATION__</span>__NAVBTN__</div>
   <div class="grid4">
     <a class="stat" href="#savings"><div class="k">Lifetime savings vs gas</div>
       <div class="v green">__GASSAVE__</div>
@@ -505,47 +502,41 @@ bracket, between polls.</p>
 </div>
 </div>
 <button id="toTop" aria-label="Back to top"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-<form id="costform" method="POST" action="/api/charge-cost-form" style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0"><input type="hidden" name="charge_id" id="form_charge_id"><input type="hidden" name="cost_per_kwh" id="form_cost_per_kwh"><input type="hidden" name="start_ts" id="form_start_ts"></form><div id="costmodal" style="display:none;position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.7);align-items:center;justify-content:center"><div style="background:#1a1d21;border:1px solid #333;border-radius:16px;padding:24px;max-width:320px;width:90%"><h3 style="margin:0 0 12px">DC charging cost</h3><p class="sub" style="margin:0 0 12px">Enter what you paid per kWh:</p><form onsubmit="saveCost();return false;" style="margin:0"><input id="costinput" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.48" style="width:100%;padding:10px;font-size:16px;border-radius:8px;border:1px solid #444;background:#0b0d10;color:#fff;box-sizing:border-box"><div style="display:flex;gap:10px;margin-top:16px"><button type="submit" style="flex:1;padding:10px;border-radius:8px;border:none;background:#7ed321;color:#000;font-weight:600;cursor:pointer">Save</button><button type="button" onclick="closeCostModal()" style="flex:1;padding:10px;border-radius:8px;border:1px solid #444;background:transparent;color:#fff;cursor:pointer">Cancel</button></div><div style="margin-top:12px;text-align:center"><a class="cost-action" href="#" onclick="clearCost();return false;" style="color:#888;font-size:12px">clear entered cost</a></div></form></div></div><div id="navmodal" role="dialog" aria-modal="true" aria-label="Send destination" style="display:none;position:fixed;inset:0;z-index:101;color-scheme:dark;
-background:rgba(0,0,0,.7);align-items:flex-start;justify-content:center;overflow:hidden;padding:24px 12px 12px;box-sizing:border-box">
-<div style="background:#1a1d21;border:1px solid #333;border-radius:16px;
-padding:18px;max-width:560px;width:100%;max-height:calc(100vh - 36px);max-height:calc(100dvh - 36px);margin:0;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden">
-<div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-<h3 style="margin:0">Send destination</h3>
-<button type="button" onclick="closeNavModal()" aria-label="Close Send destination" style="flex:0 0 auto;width:44px;height:44px;border-radius:999px;border:1px solid #33373d;background:#24262a;color:#fff;font-size:22px;line-height:44px;padding:0;cursor:pointer">×</button>
+<form id="costform" method="POST" action="/api/charge-cost-form" class="offscreen"><input type="hidden" name="charge_id" id="form_charge_id"><input type="hidden" name="cost_per_kwh" id="form_cost_per_kwh"><input type="hidden" name="start_ts" id="form_start_ts"></form><div id="costmodal" class="modal-overlay hidden"><div class="cost-card"><h3 class="m0012">DC charging cost</h3><p class="sub m0012">Enter what you paid per kWh:</p><form onsubmit="saveCost();return false;" class="m0"><input id="costinput" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.48" class="field"><div class="btn-row"><button type="submit" class="btn-primary">Save</button><button type="button" onclick="closeCostModal()" class="btn-ghost">Cancel</button></div><div class="mt12 centered"><a class="cost-action tiny-dim" href="#" onclick="clearCost();return false;">clear entered cost</a></div></form></div></div><div id="navmodal" role="dialog" aria-modal="true" aria-label="Send destination" class="nav-overlay hidden">
+<div class="nav-card">
+<div class="row-between">
+<h3 class="m0">Send destination</h3>
+<button type="button" onclick="closeNavModal()" aria-label="Close Send destination" class="modal-close">×</button>
 </div>
-<p class="sub" style="margin:4px 0 12px">The car wakes up and starts navigating.</p>
-<div style="position:relative">
-<input id="navq" type="text" placeholder="Search a place or address" autocomplete="off" aria-label="Search a place or address"
-style="width:100%;padding:10px 40px 10px 10px;font-size:16px;border-radius:8px;
-border:1px solid #444;background:#0b0d10;color:#fff;box-sizing:border-box">
-<button type="button" id="navclear" onclick="navClearSearch()" aria-label="Clear search" style="display:none;position:absolute;right:6px;top:50%;transform:translateY(-50%);width:28px;height:28px;border-radius:999px;border:none;background:#2c2f34;color:#fff;cursor:pointer;font-size:17px;line-height:28px;padding:0">×</button>
+<p class="sub m0412">The car wakes up and starts navigating.</p>
+<div class="rel">
+<input id="navq" type="text" placeholder="Search a place or address, press Enter" autocomplete="off" aria-label="Search a place or address, press Enter" class="field field-nav">
+<button type="button" id="navclear" onclick="navClearSearch()" aria-label="Clear search" class="clear-btn hidden">×</button>
 </div>
-<p class="sub" style="margin:6px 0 0;font-size:12px">You can also paste a Google Maps link.</p>
-<div id="navtabs" style="display:none;gap:8px;margin-top:12px">
-<button type="button" id="navtabrec" onclick="navSetTab('rec')" style="padding:6px 14px;border-radius:999px;border:1px solid #f2f2f2;background:#f2f2f2;color:#111;font-weight:600;cursor:pointer">Recents</button>
-<button type="button" id="navtabfav" onclick="navSetTab('fav')" style="padding:6px 14px;border-radius:999px;border:1px solid #33373d;background:#24262a;color:#9aa0a6;font-weight:500;cursor:pointer">Favorites</button>
+<p class="sub fnote">You can also paste a Google Maps link.</p>
+<div id="navtabs" class="navtabs hidden">
+<button type="button" id="navtabrec" onclick="navSetTab('rec')" class="npill npill-on">Recents</button>
+<button type="button" id="navtabfav" onclick="navSetTab('fav')" class="npill">Favorites</button>
 </div>
-<div id="navlist" style="margin-top:8px;flex:1 1 auto;min-height:0;overflow-y:auto;padding-right:2px"></div>
+<div id="navlist" class="navlist"></div>
 <div id="navselhome"></div>
-<div id="navsel" onclick="event.stopPropagation()" style="display:none;margin-top:10px;padding-top:12px;border-top:1px solid #2c2f34">
-<img id="navmap" alt="Map of the selected place" style="display:none;width:100%;height:180px;object-fit:cover;border-radius:10px;margin-top:0">
-<p id="navenergy" class="sub" style="margin:10px 0 0"></p>
-<div id="navtight" style="display:none;margin-top:12px">
-<div style="display:flex;gap:8px;align-items:center">
+<div id="navsel" onclick="event.stopPropagation()" class="navsel hidden">
+<img id="navmap" alt="Map of the selected place" class="navmap hidden">
+<p id="navenergy" class="sub m1000"></p>
+<div id="navtight" class="navtight hidden">
+<div class="tight-row">
 <span class="sub">Trip:</span>
-<button type="button" id="navow" onclick="navSetRound(false)" style="padding:6px 12px;border-radius:999px;border:1px solid #f2f2f2;background:#f2f2f2;color:#111;font-weight:600;cursor:pointer">One way</button>
-<button type="button" id="navrt" onclick="navSetRound(true)" style="padding:6px 12px;border-radius:999px;border:1px solid #33373d;background:#24262a;color:#9aa0a6;font-weight:500;cursor:pointer">Round trip</button>
+<button type="button" id="navow" onclick="navSetRound(false)" class="npill npill-sm npill-on">One way</button>
+<button type="button" id="navrt" onclick="navSetRound(true)" class="npill npill-sm">Round trip</button>
 </div>
-<p id="navtightmsg" class="sub" style="margin:10px 0 0;color:#ffb340"></p>
-<button type="button" id="navplanbtn" onclick="navPlan()" style="display:none;margin-top:10px;padding:9px 12px;border-radius:8px;border:1px solid #444;background:transparent;color:#fff;cursor:pointer">Let the car plan charging</button>
-<div id="navplan" class="sub" style="margin-top:10px"></div>
+<p id="navtightmsg" class="sub tight-msg"></p>
+<button type="button" id="navplanbtn" onclick="navPlan()" class="plan-btn hidden">Let the car plan charging</button>
+<div id="navplan" class="sub mt10"></div>
 </div>
-<div id="navstatus" class="sub" style="margin-top:14px"></div>
-<div style="display:flex;gap:10px;margin-top:16px">
-<button type="button" id="navsendbtn" onclick="navSend()" disabled style="flex:1;padding:10px;border-radius:8px;
-border:none;background:#7ed321;color:#000;font-weight:600;cursor:pointer;opacity:.45">Send</button>
-<button type="button" onclick="closeNavModal()" style="flex:1;padding:10px;border-radius:8px;
-border:1px solid #444;background:transparent;color:#fff;cursor:pointer">Cancel</button>
+<div id="navstatus" class="sub mt14"></div>
+<div class="btn-row">
+<button type="button" id="navsendbtn" onclick="navSend()" disabled class="btn-primary">Send</button>
+<button type="button" onclick="closeNavModal()" class="btn-ghost">Cancel</button>
 </div>
 </div>
 </div></div>
@@ -567,7 +558,6 @@ _MAP_W, _MAP_H = 880, 440
 # "API KEY REQUIRED"; OSM standard was too busy for the trip map.)
 _TILE_URL = ("https://server.arcgisonline.com/ArcGIS/rest/services/"
              "Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}")
-_TILE_FILTER = ""
 _MAP_UA = "Wattson/1.0"
 # Disk cache for map tiles: the dashboard rebuilds often (every poll during
 # a burst), and re-fetching tiles each time would hammer the tile servers
@@ -786,9 +776,9 @@ def _day_map_html(day: str, dtrips: list[dict]) -> str:
                 url += f"?v={int(time.time())}"
         img = (f'<img src="{url}" alt="Trip map" loading="lazy" '
                f'width="{cw}" height="{ch}" '
-               f'style="width:100%;height:auto;display:block;{_TILE_FILTER}" '
+               f'class="mapimg" '
                f'onload="this.classList.add(\'ld\')" '
-               f'onerror="this.style.display=\'none\'">')
+               f'onerror="this.classList.add(\'hidden\')">')
     # Schematic fallback when tiles failed: SVG routes on the dark card.
     return (f'<div class="mapwrap">{img}{svg}'
             f'<div class="mapattr">&copy; Esri &amp; contributors</div></div>')
@@ -818,10 +808,10 @@ def _activity_bar(day_segs: list[dict], day_start: float,
                f'{_ACT_LABEL[s["state"]]}')
         parts.append(
             f'<div class="aseg {_ACT_CLASS[s["state"]]}" '
-            f'style="left:{a / 14.4:.2f}%;width:{(b - a) / 14.4:.2f}%" '
+            f'style="--l:{a / 14.4:.2f}%;--w:{(b - a) / 14.4:.2f}%" '
             f'title="{_esc(tip)}"></div>')
     if now_min is not None:
-        parts.append(f'<div class="anow" style="left:{now_min / 14.4:.2f}%">'
+        parts.append(f'<div class="anow" style="--l:{now_min / 14.4:.2f}%">'
                      "</div>")
     return f'<div class="abar">{"".join(parts)}</div>'
 
@@ -1055,16 +1045,16 @@ def _live_charge_html(live: dict, is_home: bool = False) -> str:
         [(base / 100.0, GREEN), (added_frac, AMBER)],
         f"{soc:.0f}%" if soc is not None else "-", small, tiny)
     legend = (
-        '<div class="alegend" style="justify-content:center;margin-top:2px">'
-        f'<span><i style="background:{GREEN}"></i>plug-in {base:.0f}%</span>'
-        f'<span><i style="background:{AMBER}"></i>added</span>'
-        f'<span><i style="background:#2b2b2e"></i>empty</span></div>')
+        '<div class="alegend alegend-c">'
+        f'<span><i class="dot-g"></i>plug-in {base:.0f}%</span>'
+        f'<span><i class="dot-a"></i>added</span>'
+        f'<span><i class="dot-n"></i>empty</span></div>')
     kw_v = f'{live["kw"]:.1f}<small> kW</small>' if live.get("kw") else "-"
     kw_s = f'{live["mihr"]:.0f} mi/hr' if live.get("mihr") else "warming up"
     sess_s = f'since {_fmt_time(int(live["session_start"]))}'
     note_txt = (f'{tgt:.0f}% by about {live["end_txt"]} at this rate'
                 if live.get("end_txt") else "")
-    sub_html = (f'<div class="sub" style="text-align:center">{note_txt}</div>'
+    sub_html = (f'<div class="sub centered">{note_txt}</div>'
                 if note_txt else "")
     cost_stat = ""
     if is_home:
@@ -1101,7 +1091,7 @@ def _charge_month_summary(hist: list[dict]) -> str:
     mi = sum(c.get("miles_added") or 0 for c in chs)
     n = len(chs)
     return (
-        f'<div class="sub" style="margin:2px 0 4px">{month} &middot; '
+        f'<div class="sub m0204">{month} &middot; '
         f'{n} session{"s" if n != 1 else ""} &middot; '
         f'{kwh:.1f} kWh &middot; {mi:.0f} mi</div>')
 
@@ -1203,7 +1193,7 @@ def _point_map_html(lat: float | None, lon: float | None,
         f'alt="Charging location: {_esc(label)}" loading="lazy" '
         f'width="512" height="256" '
         f'onload="this.classList.add(\'ld\')" '
-        f'onerror="this.closest(\'.chargemap\').style.display=\'none\'">'
+        f'onerror="this.closest(\'.chargemap\').classList.add(\'hidden\')">'
         f'</div>')
 def _session_miles(c: dict, eff: float) -> float:
     """Miles for the gas comparison: prefer BMS miles_added, else kwh*eff."""
@@ -1264,15 +1254,13 @@ def _charge_row_html(c: dict, scale: float, open_: bool,
                            '$%.2f/kWh)</span> '
                            '<a href="#" onclick="event.stopPropagation();'
                            'openCostModal(%d, %.2f, %d);return false;" '
-                           'class="cost-action" '
-                           'style="color:#7ed321;font-size:12px">edit</a></span>'
+                           'class="cost-action green tiny">edit</a></span>'
                            % (_cls3, abs(_save3), _verb3, _ev_c3, _gp_val,
                               _dc_rate, c["id"], _dc_rate, c["start_ts"]))
         else:
             savings_bit = ('<span><a href="#" onclick="event.stopPropagation();'
                            'openCostModal(%d, 0, %d);return false;" '
-                           'class="cost-action" '
-                           'style="color:#7ed321">? add cost</a></span>'
+                           'class="cost-action green">? add cost</a></span>'
                            % (c["id"], c["start_ts"]))
     cap = (f'{c["soc_start"]:.0f}% &rarr; {c["soc_end"]:.0f}% &middot; '
            f'{c["avg_kw"] or "-"} kW avg')
@@ -1318,7 +1306,7 @@ def _charges_html(charges: list[dict], live: dict | None = None,
                        for i, c in enumerate(hist))
         export = ("" if os.environ.get("WATTSON_DEMO") else
                   '<a href="/api/charges.csv" '
-                  'style="font-size:14px;color:var(--dim)">Export CSV</a>')
+                  'class="dim14">Export CSV</a>')
         parts.append(
             f'<div class="card"><h3 class="row"><span>Charging log</span>'
             f'{export}</h3>'
@@ -1390,7 +1378,7 @@ def _idle_table(periods: list[dict], bad: set) -> str:
             f"<td>{pct_txt}</td></tr>")
     note = ('<p class="note"><span class="warn">*</span> unusually high vs '
             'baseline.</p>' if bad else '')
-    return ('<div style="overflow-x:auto"><table class="drain">'
+    return ('<div class="xscroll"><table class="drain">'
             '<tr><th>Idle period</th><th>Duration</th>'
             '<th>Battery</th><th>Lost</th><th>Avg draw</th>'
             '<th>%/day</th></tr>'
@@ -1645,18 +1633,18 @@ def generate() -> None:
             for r in _savings_rows[:10]
         )
         savings_table = (
-            '<div class="card" style="margin-top:16px">'
+            '<div class="card mt16">'
             "<h3>Fuel savings by session</h3>"
             '<div class="sub">Per charging session, priced at each '
             'day&apos;s gas price</div>'
-            '<div style="overflow-x:auto"><table class="ctab"><thead><tr>'
+            '<div class="xscroll"><table class="ctab"><thead><tr>'
             "<th>Date</th><th>Type</th><th>kWh</th><th>EV cost</th>"
             "<th>Gas $/gal</th><th>Gas cost</th><th>Saved</th>"
             "</tr></thead><tbody>" + _srows + "</tbody></table></div></div>"
         )
     else:
         savings_table = (
-            '<div class="card" style="margin-top:16px">'
+            '<div class="card mt16">'
             "<h3>Fuel savings by session</h3>"
             '<p class="note">'
             + ("Enter a DC price in the charging log to compare those sessions."
@@ -1875,8 +1863,7 @@ def generate() -> None:
             chart = bars
         table = _idle_table(periods, bad)
         details = (
-            '<details class="sacc"><summary class="dim" '
-            'style="font-size:14px;cursor:pointer;margin-top:14px">'
+            '<details class="sacc"><summary class="dim lbl14">'
             'Period-by-period breakdown</summary>'
             f'<div class="abody">{table}</div></details>')
         return f'<div class="sub">{avg}</div>' + chart + details
@@ -1974,8 +1961,11 @@ def generate() -> None:
         "__BOLT__": (_BOLT_SVG if live and soc is not None and soc >= 8
                      else ""),
         "__LOCATION__": location_html,
-        "__NAVBTN__": ("" if os.environ.get("WATTSON_DEMO") else
-                      '<button type="button" onclick="openNavModal()" style="flex:0 0 auto;padding:7px 14px;border-radius:999px;border:1px solid #3a3f45;background:rgba(255,255,255,.05);color:#e8eaed;font-size:13px;font-weight:600;cursor:pointer">Send destination</button>'),
+        "__NAVBTN__": ("" if (os.environ.get("WATTSON_DEMO")
+                            or not token_from_env())
+                       else '<button type="button" id="navopen" '
+                            'class="navbtn" onclick="openNavModal()">'
+                            'Send destination</button>'),
         "__IDLESTAT__": idle_stat,
         "__TIRETILE__": tiretile,
         "__LIFEMI__": f"{lifetime_mpk:.2f}" if lifetime_mpk else "-",

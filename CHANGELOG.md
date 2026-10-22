@@ -27,6 +27,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   web server serves as their own files (the page links them).
   Demo builds still inline both files, so the demo page remains a
   single self-contained file.
+- No inline styles left: all dashboard markup and scripts use
+  classes from dashboard.css (the few per-render values, like bar
+  widths, are CSS custom properties), and a test guards against
+  inline styles creeping back. Place search now runs when you
+  press Enter instead of as you type, per Nominatim's usage
+  policy.
+
+### Fixed
+- Send confirmation can no longer be fooled by the car
+  re-reporting an unchanged route (traffic refresh, wake cycle):
+  a same-destination confirmation now requires the plan itself
+  to have changed. A second send is also refused atomically
+  while one is in flight; the check and the job start are a
+  single locked step.
+- /dashboard.css and /dashboard.js now require the same login as
+  the rest of the dashboard when a password is set, and the
+  Send destination button stays hidden while no password is set
+  (the feature is off in that state).
 
 ## [0.8.1] - 2026-10-21
 ### Fixed

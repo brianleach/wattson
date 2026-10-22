@@ -35,6 +35,9 @@ promises. Take it, run it, break it, make it yours.
 - **Fuel savings vs gas**, per-session and lifetime savings against a gas
   SUV, priced at each charge day's AAA gas price, with transparent assumptions
 - **Drive history**, the record Rivian never kept
+- **Send destination**, send an address, a saved place, or a pasted map
+  link to the car's navigation from the dashboard, with an energy check
+  at your real efficiency and confirmation from the car's own route report
 - **Optional dashboard login**, password-protect your dashboard when exposing
   it through a tunnel
 

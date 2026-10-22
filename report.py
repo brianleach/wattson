@@ -632,7 +632,7 @@ table.drain tr:last-child td,table.ctab tr:last-child td{border-bottom:0}
     </div>
   </div>
   <div class="battbar__BATTCHG__"><div style="width:__SOCPCT__%">__BOLT__</div></div>
-  <div class="heroloc">__LOCATION__</div>
+<div class="heroloc" style="display:flex;align-items:center;justify-content:space-between;gap:12px"><span style="flex:1 1 auto;min-width:0">__LOCATION__</span><button type="button" onclick="openNavModal()" style="flex:0 0 auto;padding:7px 14px;border-radius:999px;border:1px solid #3a3f45;background:rgba(255,255,255,.05);color:#e8eaed;font-size:13px;font-weight:600;cursor:pointer">Send destination</button></div>
   <div class="grid4">
     <a class="stat" href="#savings"><div class="k">Lifetime savings vs gas</div>
       <div class="v green">__GASSAVE__</div>
@@ -684,7 +684,321 @@ bracket, between polls.</p>
 <button id="toTop" aria-label="Back to top"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
 <script>
 __SCRIPT__
-</script><script>var scrollRaf=null;(function(){var ease=function(t){return t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2};document.querySelectorAll('a[href^="#"]').forEach(function(a){a.addEventListener('click',function(e){var el=document.querySelector(a.getAttribute('href'));if(!el)return;e.preventDefault();var y=el.getBoundingClientRect().top+window.scrollY-document.querySelector('.sitenav').getBoundingClientRect().bottom-12;cancelAnimationFrame(scrollRaf);var s=window.scrollY,d=y-s,dur=900,t0=performance.now();(function step(t){var p=Math.min((t-t0)/dur,1);window.scrollTo(0,s+d*ease(p));if(p<1)scrollRaf=requestAnimationFrame(step);})(t0);});});})();</script><script>(function(){var links={};document.querySelectorAll('.nav-links a[href^="#"]').forEach(function(a){links[a.getAttribute('href').slice(1)]=a});var ids=Object.keys(links);var secs=ids.map(function(id){return document.getElementById(id)}).filter(Boolean).sort(function(a,b){return a.getBoundingClientRect().top-b.getBoundingClientRect().top});if(!secs.length)return;var cur='',locked=null,lockTimer=null;function setActive(id){if(id===cur)return;cur=id;ids.forEach(function(k){links[k].classList.toggle('active',k===id)})}function update(){if(locked){setActive(locked);return}var line=120,id='';secs.forEach(function(s){if(s.getBoundingClientRect().top<=line){id=s.id}});var lastSec=secs[secs.length-1];var distToBottom=document.documentElement.scrollHeight-(window.innerHeight+window.scrollY);if(lastSec&&distToBottom<=300&&lastSec.getBoundingClientRect().top<window.innerHeight){id=lastSec.id}setActive(id)}document.querySelectorAll('.nav-links a[href^="#"]').forEach(function(a){a.addEventListener('click',function(){locked=a.getAttribute('href').slice(1);setActive(locked);clearTimeout(lockTimer);lockTimer=setTimeout(function(){locked=null;update()},1000)})});var ticking=false;window.addEventListener('scroll',function(){if(ticking)return;ticking=true;requestAnimationFrame(function(){ticking=false;update()})},{passive:true});update();})();</script><form id="costform" method="POST" action="/api/charge-cost-form" style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0"><input type="hidden" name="charge_id" id="form_charge_id"><input type="hidden" name="cost_per_kwh" id="form_cost_per_kwh"><input type="hidden" name="start_ts" id="form_start_ts"></form><div id="costmodal" style="display:none;position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.7);align-items:center;justify-content:center"><div style="background:#1a1d21;border:1px solid #333;border-radius:16px;padding:24px;max-width:320px;width:90%"><h3 style="margin:0 0 12px">DC charging cost</h3><p class="sub" style="margin:0 0 12px">Enter what you paid per kWh:</p><form onsubmit="saveCost();return false;" style="margin:0"><input id="costinput" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.48" style="width:100%;padding:10px;font-size:16px;border-radius:8px;border:1px solid #444;background:#0b0d10;color:#fff;box-sizing:border-box"><div style="display:flex;gap:10px;margin-top:16px"><button type="submit" style="flex:1;padding:10px;border-radius:8px;border:none;background:#7ed321;color:#000;font-weight:600;cursor:pointer">Save</button><button type="button" onclick="closeCostModal()" style="flex:1;padding:10px;border-radius:8px;border:1px solid #444;background:transparent;color:#fff;cursor:pointer">Cancel</button></div><div style="margin-top:12px;text-align:center"><a class="cost-action" href="#" onclick="clearCost();return false;" style="color:#888;font-size:12px">clear entered cost</a></div></form></div></div><script>var _costChargeId=null;var _costStartTs=null;function openCostModal(chargeId,currentVal,startTs){_costChargeId=chargeId;_costStartTs=(startTs===undefined||startTs===null)?'':startTs;document.getElementById('costinput').value=((currentVal===null||currentVal===undefined)?'':currentVal);document.getElementById('costmodal').style.display='flex';document.getElementById('costinput').focus();}function closeCostModal(){document.getElementById('costmodal').style.display='none';_costChargeId=null;}function saveCost(){var v=parseFloat(document.getElementById('costinput').value);if(v===null||v===undefined||isNaN(v)||v<0){alert('Enter a valid price');return;}document.getElementById('form_charge_id').value=_costChargeId;document.getElementById('form_start_ts').value=_costStartTs;document.getElementById('form_cost_per_kwh').value=v;document.getElementById('costform').submit();}function clearCost(){if(!confirm('Clear the entered cost for this session?'))return;document.getElementById('form_charge_id').value=_costChargeId;document.getElementById('form_start_ts').value=_costStartTs;document.getElementById('form_cost_per_kwh').value='';document.getElementById('costform').submit();}document.getElementById('costmodal').addEventListener('click',function(e){if(e.target===this)closeCostModal();});document.addEventListener('keydown',function(e){if(e.key==='Escape'){var m=document.getElementById('costmodal');if(m&&m.style.display!=='none')closeCostModal();}});</script></body></html>"""
+</script><script>var scrollRaf=null;(function(){var ease=function(t){return t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2};document.querySelectorAll('a[href^="#"]').forEach(function(a){a.addEventListener('click',function(e){var el=document.querySelector(a.getAttribute('href'));if(!el)return;e.preventDefault();var y=el.getBoundingClientRect().top+window.scrollY-document.querySelector('.sitenav').getBoundingClientRect().bottom-12;cancelAnimationFrame(scrollRaf);var s=window.scrollY,d=y-s,dur=900,t0=performance.now();(function step(t){var p=Math.min((t-t0)/dur,1);window.scrollTo(0,s+d*ease(p));if(p<1)scrollRaf=requestAnimationFrame(step);})(t0);});});})();</script><script>(function(){var links={};document.querySelectorAll('.nav-links a[href^="#"]').forEach(function(a){links[a.getAttribute('href').slice(1)]=a});var ids=Object.keys(links);var secs=ids.map(function(id){return document.getElementById(id)}).filter(Boolean).sort(function(a,b){return a.getBoundingClientRect().top-b.getBoundingClientRect().top});if(!secs.length)return;var cur='',locked=null,lockTimer=null;function setActive(id){if(id===cur)return;cur=id;ids.forEach(function(k){links[k].classList.toggle('active',k===id)})}function update(){if(locked){setActive(locked);return}var line=120,id='';secs.forEach(function(s){if(s.getBoundingClientRect().top<=line){id=s.id}});var lastSec=secs[secs.length-1];var distToBottom=document.documentElement.scrollHeight-(window.innerHeight+window.scrollY);if(lastSec&&distToBottom<=300&&lastSec.getBoundingClientRect().top<window.innerHeight){id=lastSec.id}setActive(id)}document.querySelectorAll('.nav-links a[href^="#"]').forEach(function(a){a.addEventListener('click',function(){locked=a.getAttribute('href').slice(1);setActive(locked);clearTimeout(lockTimer);lockTimer=setTimeout(function(){locked=null;update()},1000)})});var ticking=false;window.addEventListener('scroll',function(){if(ticking)return;ticking=true;requestAnimationFrame(function(){ticking=false;update()})},{passive:true});update();})();</script><form id="costform" method="POST" action="/api/charge-cost-form" style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0"><input type="hidden" name="charge_id" id="form_charge_id"><input type="hidden" name="cost_per_kwh" id="form_cost_per_kwh"><input type="hidden" name="start_ts" id="form_start_ts"></form><div id="costmodal" style="display:none;position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.7);align-items:center;justify-content:center"><div style="background:#1a1d21;border:1px solid #333;border-radius:16px;padding:24px;max-width:320px;width:90%"><h3 style="margin:0 0 12px">DC charging cost</h3><p class="sub" style="margin:0 0 12px">Enter what you paid per kWh:</p><form onsubmit="saveCost();return false;" style="margin:0"><input id="costinput" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.48" style="width:100%;padding:10px;font-size:16px;border-radius:8px;border:1px solid #444;background:#0b0d10;color:#fff;box-sizing:border-box"><div style="display:flex;gap:10px;margin-top:16px"><button type="submit" style="flex:1;padding:10px;border-radius:8px;border:none;background:#7ed321;color:#000;font-weight:600;cursor:pointer">Save</button><button type="button" onclick="closeCostModal()" style="flex:1;padding:10px;border-radius:8px;border:1px solid #444;background:transparent;color:#fff;cursor:pointer">Cancel</button></div><div style="margin-top:12px;text-align:center"><a class="cost-action" href="#" onclick="clearCost();return false;" style="color:#888;font-size:12px">clear entered cost</a></div></form></div></div><script>var _costChargeId=null;var _costStartTs=null;function openCostModal(chargeId,currentVal,startTs){_costChargeId=chargeId;_costStartTs=(startTs===undefined||startTs===null)?'':startTs;document.getElementById('costinput').value=((currentVal===null||currentVal===undefined)?'':currentVal);document.getElementById('costmodal').style.display='flex';document.getElementById('costinput').focus();}function closeCostModal(){document.getElementById('costmodal').style.display='none';_costChargeId=null;}function saveCost(){var v=parseFloat(document.getElementById('costinput').value);if(v===null||v===undefined||isNaN(v)||v<0){alert('Enter a valid price');return;}document.getElementById('form_charge_id').value=_costChargeId;document.getElementById('form_start_ts').value=_costStartTs;document.getElementById('form_cost_per_kwh').value=v;document.getElementById('costform').submit();}function clearCost(){if(!confirm('Clear the entered cost for this session?'))return;document.getElementById('form_charge_id').value=_costChargeId;document.getElementById('form_start_ts').value=_costStartTs;document.getElementById('form_cost_per_kwh').value='';document.getElementById('costform').submit();}document.getElementById('costmodal').addEventListener('click',function(e){if(e.target===this)closeCostModal();});document.addEventListener('keydown',function(e){if(e.key==='Escape'){var m=document.getElementById('costmodal');if(m&&m.style.display!=='none')closeCostModal();}});</script><div id="navmodal" style="display:none;position:fixed;inset:0;z-index:101;color-scheme:dark;
+background:rgba(0,0,0,.7);align-items:flex-start;justify-content:center;overflow:hidden;padding:24px 12px 12px;box-sizing:border-box">
+<div style="background:#1a1d21;border:1px solid #333;border-radius:16px;
+padding:18px;max-width:560px;width:100%;max-height:calc(100vh - 36px);max-height:calc(100dvh - 36px);margin:0;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden">
+<div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+<h3 style="margin:0">Send destination</h3>
+<button type="button" onclick="closeNavModal()" aria-label="Close Send destination" style="flex:0 0 auto;width:44px;height:44px;border-radius:999px;border:1px solid #33373d;background:#24262a;color:#fff;font-size:22px;line-height:44px;padding:0;cursor:pointer">×</button>
+</div>
+<p class="sub" style="margin:4px 0 12px">The car wakes up and starts navigating.</p>
+<div style="position:relative">
+<input id="navq" type="text" placeholder="Search a place or address" autocomplete="off"
+style="width:100%;padding:10px 40px 10px 10px;font-size:16px;border-radius:8px;
+border:1px solid #444;background:#0b0d10;color:#fff;box-sizing:border-box">
+<button type="button" id="navclear" onclick="navClearSearch()" aria-label="Clear search" style="display:none;position:absolute;right:6px;top:50%;transform:translateY(-50%);width:28px;height:28px;border-radius:999px;border:none;background:#2c2f34;color:#fff;cursor:pointer;font-size:17px;line-height:28px;padding:0">×</button>
+</div>
+<p class="sub" style="margin:6px 0 0;font-size:12px">You can also paste a Google Maps link.</p>
+<div id="navtabs" style="display:none;gap:8px;margin-top:12px">
+<button type="button" id="navtabrec" onclick="navSetTab('rec')" style="padding:6px 14px;border-radius:999px;border:1px solid #f2f2f2;background:#f2f2f2;color:#111;font-weight:600;cursor:pointer">Recents</button>
+<button type="button" id="navtabfav" onclick="navSetTab('fav')" style="padding:6px 14px;border-radius:999px;border:1px solid #33373d;background:#24262a;color:#9aa0a6;font-weight:500;cursor:pointer">Favorites</button>
+</div>
+<div id="navlist" style="margin-top:8px;flex:1 1 auto;min-height:0;overflow-y:auto;padding-right:2px"></div>
+<div id="navselhome"></div>
+<div id="navsel" onclick="event.stopPropagation()" style="display:none;margin-top:10px;padding-top:12px;border-top:1px solid #2c2f34">
+<img id="navmap" alt="Map of the selected place" style="display:none;width:100%;height:180px;object-fit:cover;border-radius:10px;margin-top:0">
+<p id="navenergy" class="sub" style="margin:10px 0 0"></p>
+<div id="navtight" style="display:none;margin-top:12px">
+<div style="display:flex;gap:8px;align-items:center">
+<span class="sub">Trip:</span>
+<button type="button" id="navow" onclick="navSetRound(false)" style="padding:6px 12px;border-radius:999px;border:1px solid #f2f2f2;background:#f2f2f2;color:#111;font-weight:600;cursor:pointer">One way</button>
+<button type="button" id="navrt" onclick="navSetRound(true)" style="padding:6px 12px;border-radius:999px;border:1px solid #33373d;background:#24262a;color:#9aa0a6;font-weight:500;cursor:pointer">Round trip</button>
+</div>
+<p id="navtightmsg" class="sub" style="margin:10px 0 0;color:#ffb340"></p>
+<button type="button" id="navplanbtn" onclick="navPlan()" style="display:none;margin-top:10px;padding:9px 12px;border-radius:8px;border:1px solid #444;background:transparent;color:#fff;cursor:pointer">Let the car plan charging</button>
+<div id="navplan" class="sub" style="margin-top:10px"></div>
+</div>
+<div id="navstatus" class="sub" style="margin-top:14px"></div>
+<div style="display:flex;gap:10px;margin-top:16px">
+<button type="button" id="navsendbtn" onclick="navSend()" disabled style="flex:1;padding:10px;border-radius:8px;
+border:none;background:#7ed321;color:#000;font-weight:600;cursor:pointer;opacity:.45">Send</button>
+<button type="button" onclick="closeNavModal()" style="flex:1;padding:10px;border-radius:8px;
+border:1px solid #444;background:transparent;color:#fff;cursor:pointer">Cancel</button>
+</div>
+</div>
+</div></div>
+<script>
+var _navCar = null, _navWhMi = 380, _navSaved = [], _navListArr = [],
+    _navPlace = null, _navSelIdx = null, _navMode = 'direct', _navRound = false,
+    _navJob = null, _navTimer = null, _navSearchTimer = null, _navTab = 'rec';
+function openNavModal() {
+  _navPlace = null; _navSelIdx = null; _navMode = 'direct'; _navRound = false; _navJob = null;
+  _navTab = 'rec';
+  document.getElementById('navmodal').style.display = 'flex';
+  document.getElementById('navq').value = '';
+  navUpdateClear();
+  navParkSel();
+  document.getElementById('navstatus').textContent = '';
+  document.getElementById('navlist').innerHTML = '<p class="sub">Loading your places...</p>';
+  navSetSend(false, 'Send');
+  fetch('/api/nav/state').then(function(r) { return r.json(); }).then(function(j) {
+    _navCar = j.car || null; _navWhMi = j.wh_mi || 380; _navSaved = j.places || [];
+    navShowBrowse();
+  }).catch(function() {
+    document.getElementById('navlist').innerHTML = '<p class="sub">Could not load your places. Search still works.</p>';
+  });
+  document.getElementById('navq').focus();
+}
+function closeNavModal() {
+  document.getElementById('navmodal').style.display = 'none';
+  if (_navTimer) { clearInterval(_navTimer); _navTimer = null; }
+}
+function navSetSend(enabled, label) {
+  var b = document.getElementById('navsendbtn');
+  b.disabled = !enabled; b.style.opacity = enabled ? '1' : '.45';
+  if (label) b.textContent = label;
+}
+function navSegBtn(el, active) {
+  if (!el) return;
+  el.style.background = active ? '#f2f2f2' : '#24262a';
+  el.style.color = active ? '#111' : '#9aa0a6';
+  el.style.borderColor = active ? '#f2f2f2' : '#33373d';
+  el.style.fontWeight = active ? '600' : '500';
+}
+function navUpdateClear() {
+  var b = document.getElementById('navclear');
+  var q = document.getElementById('navq');
+  if (b && q) b.style.display = q.value ? 'block' : 'none';
+}
+function navClearSearch() {
+  var q = document.getElementById('navq');
+  if (_navSearchTimer) { clearTimeout(_navSearchTimer); _navSearchTimer = null; }
+  if (q) q.value = '';
+  navUpdateClear();
+  navShowBrowse();
+  if (q) q.focus();
+}
+function navParkSel() {
+  var sel = document.getElementById('navsel');
+  var home = document.getElementById('navselhome');
+  if (sel && home && sel.parentNode !== home) home.appendChild(sel);
+  if (sel) sel.style.display = 'none';
+  navClearRowSel();
+}
+function navClearRowSel() {
+  var rows = document.querySelectorAll('#navlist .navrow');
+  for (var r = 0; r < rows.length; r++) {
+    rows[r].style.borderColor = '#2c2f34';
+    rows[r].style.background = 'transparent';
+  }
+}
+function navExpandSel(row) {
+  var sel = document.getElementById('navsel');
+  if (!sel) return;
+  if (row) row.appendChild(sel);
+  sel.style.display = 'block';
+  navClearRowSel();
+  if (row) {
+    row.style.borderColor = '#7ed321';
+    row.style.background = 'rgba(126,211,33,.07)';
+    setTimeout(function() { row.scrollIntoView({block: 'start', behavior: 'smooth'}); }, 40);
+  }
+}
+function navRow(p, i) {
+  var dist = (p.distance_mi !== undefined && p.distance_mi !== null) ? ' &middot; ' + p.distance_mi + ' mi' : '';
+  return '<div class="navrow" onclick="navPick(' + i + ', this)" style="padding:9px 10px;border:1px solid #2c2f34;border-radius:10px;margin-bottom:8px;cursor:pointer;background:transparent">' +
+    '<div style="font-weight:600">' + navEsc(p.name) + '</div>' +
+    '<div style="color:#a1a1a6;font-size:13px;margin-top:4px;line-height:1.4">' + navEsc(p.address || '') + dist + '</div></div>';
+}
+function navEsc(s) {
+  return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function navSetTab(t) {
+  _navTab = t;
+  navShowBrowse();
+}
+function navShowBrowse() {
+  navParkSel(); _navPlace = null; _navSelIdx = null; navSetSend(false, 'Send');
+  document.getElementById('navtabs').style.display = 'flex';
+  navSegBtn(document.getElementById('navtabrec'), _navTab === 'rec');
+  navSegBtn(document.getElementById('navtabfav'), _navTab === 'fav');
+  var seen = {}, out = [];
+  _navSaved.forEach(function(p) {
+    var isFav = (p.type || '').indexOf('FAVORITE') === 0;
+    if ((_navTab === 'fav') !== isFav) return;
+    var key = p.place_id || (p.lat + ',' + p.lon);
+    if (seen[key]) return; seen[key] = 1; out.push(p);
+  });
+  _navListArr = (_navTab === 'rec') ? out.slice(0, 12) : out;
+  var html = '';
+  _navListArr.forEach(function(p, i) { html += navRow(p, i); });
+  document.getElementById('navlist').innerHTML = html ||
+    ('<p class="sub">' + (_navTab === 'fav' ? 'No favorites saved in Rivian.' : 'No recent places.') + '</p>');
+}
+document.getElementById('navq').addEventListener('input', function() {
+  navUpdateClear();
+  var q = this.value.trim();
+  if (_navSearchTimer) clearTimeout(_navSearchTimer);
+  if (!q) { navShowBrowse(); return; }
+  document.getElementById('navtabs').style.display = 'none';
+  if (q.indexOf('http') === 0 && (q.indexOf('maps') >= 0 || q.indexOf('telenav') >= 0 || q.indexOf('goo.gl') >= 0)) {
+    _navListArr = [{name: 'Map link', address: q, url: q, lat: null, lon: null, place_id: null}];
+    navParkSel(); _navPlace = null; _navSelIdx = null; navSetSend(false, 'Send');
+    document.getElementById('navlist').innerHTML = '<p class="sub" style="margin:0 0 8px">Link</p>' + navRow(_navListArr[0], 0);
+    return;
+  }
+  if (q.length < 3) return;
+  _navSearchTimer = setTimeout(function() {
+    navParkSel(); _navPlace = null; _navSelIdx = null; navSetSend(false, 'Send');
+    fetch('/api/nav/search?q=' + encodeURIComponent(q)).then(function(r) { return r.json(); }).then(function(j) {
+      if (!j.ok) { document.getElementById('navlist').innerHTML = '<p class="sub">' + navEsc(j.error || 'Search failed') + '</p>'; return; }
+      _navListArr = j.results || [];
+      var html = _navListArr.length ? '<p class="sub" style="margin:0 0 8px">Results</p>' : '<p class="sub">No matches. Try a street address.</p>';
+      _navListArr.forEach(function(p, i) { html += navRow(p, i); });
+      document.getElementById('navlist').innerHTML = html;
+    }).catch(function() {
+      document.getElementById('navlist').innerHTML = '<p class="sub">Search failed. Try again.</p>';
+    });
+  }, 350);
+});
+function navPick(i, row) {
+  _navPlace = _navListArr[i]; _navSelIdx = i; _navMode = 'direct'; _navRound = false;
+  document.getElementById('navplan').innerHTML = '';
+  document.getElementById('navstatus').textContent = '';
+  var img = document.getElementById('navmap');
+  if (_navPlace.lat !== null && _navPlace.lat !== undefined) {
+    img.src = '/api/nav/map?lat=' + _navPlace.lat + '&lon=' + _navPlace.lon;
+    img.style.display = 'block';
+  } else { img.style.display = 'none'; }
+  navExpandSel(row);
+  navSetSend(true, 'Send');
+  navRenderEnergy();
+}
+function _havMi(lat1, lon1, lat2, lon2) {
+  var R = 3958.8, t = Math.PI / 180;
+  var x = Math.sin((lat2 - lat1) * t / 2), y = Math.sin((lon2 - lon1) * t / 2);
+  var h = x * x + Math.cos(lat1 * t) * Math.cos(lat2 * t) * y * y;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function navEstimate() {
+  if (!_navCar || !_navPlace || _navPlace.lat === null || _navPlace.lat === undefined) return null;
+  if (_navCar.lat === null || _navCar.soc === null || _navCar.soc === undefined) return null;
+  var roadMi = _havMi(_navCar.lat, _navCar.lon, _navPlace.lat, _navPlace.lon) * 1.3;
+  var kwh = roadMi * _navWhMi / 1000;
+  var arrival = _navCar.soc - kwh / 87.9 * 100;
+  return {roadMi: roadMi, arrival: arrival, rtArrival: _navCar.soc - 2 * kwh / 87.9 * 100};
+}
+function navRenderEnergy() {
+  var line = document.getElementById('navenergy');
+  var tight = document.getElementById('navtight');
+  var est = navEstimate();
+  if (!_navPlace || _navPlace.lat === null || _navPlace.lat === undefined) {
+    line.textContent = 'The car will resolve this link. No charge estimate for links.';
+    tight.style.display = 'none'; return;
+  }
+  if (!est) { line.textContent = ''; tight.style.display = 'none'; return; }
+  var shown = _navRound ? est.rtArrival : est.arrival;
+  line.textContent = 'About ' + Math.round(est.roadMi) + ' mi by road' +
+    (_navRound ? ' each way' : '') + ". You'd arrive at about " +
+    Math.max(0, Math.round(shown)) + '% at your usual efficiency.';
+  var ow = document.getElementById('navow'), rt = document.getElementById('navrt');
+  navSegBtn(ow, !_navRound);
+  navSegBtn(rt, _navRound);
+  if (est.arrival < 45 || est.rtArrival < 45) {
+    tight.style.display = 'block';
+    var msg = document.getElementById('navtightmsg');
+    var btn = document.getElementById('navplanbtn');
+    if (shown < 20) {
+      msg.textContent = "That's a lower arrival charge than is comfortable.";
+      btn.style.display = 'block';
+    } else { msg.textContent = ''; btn.style.display = 'none'; }
+  } else { tight.style.display = 'none'; }
+}
+function navSetRound(b) {
+  _navRound = b; _navMode = 'direct';
+  document.getElementById('navplan').innerHTML = '';
+  navSetSend(true, 'Send');
+  navRenderEnergy();
+}
+function navPlan() {
+  var btn = document.getElementById('navplanbtn');
+  btn.disabled = true; btn.textContent = 'Asking the car...';
+  fetch('/api/nav/plan', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({place: _navPlace, round_trip: _navRound})
+  }).then(function(r) { return r.json(); }).then(function(j) {
+    btn.disabled = false; btn.textContent = 'Let the car plan charging';
+    if (!j.ok) { document.getElementById('navplan').textContent = j.error || 'Planning failed.'; return; }
+    var txt = "The car's plan: " + Math.round(j.distance_mi) + ' mi, about ' +
+      j.drive_minutes + ' min of driving, arriving at about ' +
+      Math.round(j.final_arrival_soc !== null ? j.final_arrival_soc : j.arrival_soc) + '%.';
+    if (j.chargers && j.chargers.length) {
+      txt += ' Charging stops: ' + j.chargers.map(function(c) { return navEsc(c.name) + ' (~' + c.minutes + ' min)'; }).join(', ') + '.';
+    } else { txt += ' No charging stop needed.'; }
+    if (!j.reachable) txt += ' Even with charging, the car says this is not reachable right now.';
+    document.getElementById('navplan').innerHTML = txt;
+    _navMode = 'trip';
+    navSetSend(true, 'Send trip');
+  }).catch(function() {
+    btn.disabled = false; btn.textContent = 'Let the car plan charging';
+    document.getElementById('navplan').textContent = 'Planning failed. Try again.';
+  });
+}
+function navSend() {
+  navSetSend(false);
+  document.getElementById('navstatus').textContent = 'Sending to the car...';
+  fetch('/api/nav/send', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({place: _navPlace, mode: _navMode, round_trip: _navRound})
+  }).then(function(r) { return r.json(); }).then(function(j) {
+    if (!j.ok) {
+      document.getElementById('navstatus').textContent = j.error || 'Send failed.';
+      navSetSend(true, _navMode === 'trip' ? 'Send trip' : 'Send'); return;
+    }
+    _navJob = j.job_id;
+    var waited = 0;
+    if (_navTimer) clearInterval(_navTimer);
+    _navTimer = setInterval(function() {
+      waited += 3;
+      fetch('/api/nav/status?job=' + _navJob).then(function(r) { return r.json(); }).then(function(s) {
+        if (!s.ok) return;
+        var job = s.job;
+        if (job.state === 'confirmed') {
+          clearInterval(_navTimer); _navTimer = null;
+          var names = (job.route.destinations || []).map(function(d) { return d.name; }).join(', ');
+          var txt = 'Car is navigating to ' + names + '.';
+          if (job.route.chargers && job.route.chargers.length) {
+            txt += ' Charging stops the car planned: ' + job.route.chargers.map(function(c) { return navEsc(c.name) + ' (~' + c.minutes + ' min)'; }).join(', ') + '.';
+          }
+          document.getElementById('navstatus').innerHTML = txt;
+        } else if (job.state === 'failed') {
+          clearInterval(_navTimer); _navTimer = null;
+          document.getElementById('navstatus').textContent = job.error || 'The send failed.';
+          navSetSend(true, _navMode === 'trip' ? 'Send trip' : 'Send');
+        } else {
+          document.getElementById('navstatus').textContent = 'Sent. Waiting for the car to confirm, usually under a minute.';
+        }
+        if (waited > 170 && _navTimer) {
+          clearInterval(_navTimer); _navTimer = null;
+          document.getElementById('navstatus').textContent = 'Still no confirmation from the car. Check the car screen before sending again.';
+        }
+      }).catch(function() {});
+    }, 3000);
+  }).catch(function() {
+    document.getElementById('navstatus').textContent = 'Send failed. Try again.';
+    navSetSend(true, _navMode === 'trip' ? 'Send trip' : 'Send');
+  });
+}
+document.getElementById('navmodal').addEventListener('click', function(e) {
+  if (e.target === this) closeNavModal();
+});
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') {
+    var m = document.getElementById('navmodal');
+    if (m && m.style.display !== 'none') closeNavModal();
+  }
+});
+</script>
+</body></html>"""
 
 _BOLT_SVG = ('<svg class="bolt" viewBox="0 0 24 24" aria-hidden="true">'
             '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>'

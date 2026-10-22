@@ -240,7 +240,7 @@ class NavMapTests(unittest.TestCase):
                                 headers=AUTH)
         self.assertEqual(r.status_code, 200)
         self.assertEqual(render.call_args.args, (33.6, -117.7))
-        self.assertEqual(render.call_args.kwargs.get("z"), 14)
+        self.assertEqual(render.call_args.kwargs.get("z"), 15)
 
     def test_map_image_opens_google_maps(self):
         import report
@@ -249,7 +249,7 @@ class NavMapTests(unittest.TestCase):
               "dashboard.js").read_text(encoding="utf-8")
         self.assertIn("google.com/maps/search/?api=1", js)
         self.assertIn("query_place_id", js)
-        self.assertIn("&z=14", js)
+        self.assertIn("&z=15", js)
 
 
 class SavedPlacesCacheTests(unittest.TestCase):

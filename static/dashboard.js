@@ -376,7 +376,7 @@ function navPick(i, row) {
   document.getElementById('navstatus').textContent = '';
   var img = document.getElementById('navmap');
   if (_navPlace.lat !== null && _navPlace.lat !== undefined) {
-    img.src = '/api/nav/map?lat=' + _navPlace.lat + '&lon=' + _navPlace.lon + '&z=14';
+    img.src = '/api/nav/map?lat=' + _navPlace.lat + '&lon=' + _navPlace.lon + '&z=15';
     img.classList.remove('hidden');
   } else { img.classList.add('hidden'); }
 

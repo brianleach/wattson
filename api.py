@@ -472,9 +472,9 @@ def nav_map():
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
         return "Bad coordinates", 400
     try:
-        zoom = int(request.args.get("z", 14))
+        zoom = int(request.args.get("z", 15))
     except (TypeError, ValueError):
-        zoom = 14
+        zoom = 15
     zoom = max(3, min(18, zoom))
     try:
         import report

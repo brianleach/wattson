@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   they act on the car and read its saved places and live location.
 
 ### Changed
-- The Send destination confirmation map renders at zoom 14
+- The Send destination confirmation map renders at zoom 15
   (trip and charge maps are unchanged), and clicking it opens
   the place in Google Maps in a new tab.
 - The dashboard's CSS and JavaScript moved out of the generated

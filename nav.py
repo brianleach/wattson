@@ -24,7 +24,6 @@ import asyncio
 import base64
 import json
 import math
-import struct
 import threading
 import time
 import urllib.parse
@@ -32,7 +31,6 @@ import urllib.request
 import uuid
 
 TRIP_INFO_RVM = "navigation.navigation_service.trip_info"
-TRIP_MODEL = "c2v_navigation.trip_copilot.updated_trip"
 TARGET_SOC = 20.0  # arrival charge the car's planner aims for
 
 # Charging networks the app plans with (ids as the app sends them).
@@ -41,6 +39,7 @@ NETWORKS = ("10001", "10025", "10027", "10030", "10031", "10032",
 
 _UA = "Wattson/1.0 (open-source Rivian energy tracker)"
 _last_search = 0.0
+_search_lock = threading.Lock()
 
 SAVED_Q = (
     "query savedLocations($vehicleId: String!, $userId: String!) { mapSearchSavedLocations("
@@ -54,11 +53,6 @@ SHARE_MUT = (
 )
 SEND_TRIP_MUT = (
     "mutation sendTripToVehicle($attrs: SendTripToVehicleInput!) { sendTripToVehicle(attrs: $attrs) }"
-)
-SEND_UPDATED_MUT = (
-    "mutation SendUpdatedTrip($vehicleId: String!, $payload: String!) { sendParallaxPayload("
-    "payload: $payload meta: { vehicleId: $vehicleId model: \"" + TRIP_MODEL + "\" "
-    "isVehicleModelOp: false requiresWakeup: true }) { success } }"
 )
 PLAN_Q = (
     "query PlanTrip2($waypoints: [RequestWaypointInput!]!, $vehicle: String!, $startingSoc: Float, "
@@ -187,10 +181,11 @@ def search_places(query: str, near_lat=None, near_lon=None) -> list[dict]:
     """Forward search via Nominatim (same service and etiquette as
     geocode.py: descriptive UA, at most 1 request/second)."""
     global _last_search
-    wait = _last_search + 1.1 - time.monotonic()
-    if wait > 0:
-        time.sleep(wait)
-    _last_search = time.monotonic()
+    with _search_lock:
+        wait = _last_search + 1.1 - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        _last_search = time.monotonic()
     params = {"q": query, "format": "jsonv2", "addressdetails": 1,
               "limit": 6, "countrycodes": "us"}
     if near_lat is not None and near_lon is not None:
@@ -457,6 +452,7 @@ async def _send_and_confirm_async(place, mode, round_trip, home, origin):
             await watch.wait_for(lambda r: True, 10)
             baseline = parse_trip_info(watch.route) if watch.route else None
             baseline_names = _names(baseline)
+            baseline_raw = watch.route
             want = (place.get("name") or "").strip().lower()
 
             def confirmed(raw: bytes) -> bool:
@@ -464,9 +460,13 @@ async def _send_and_confirm_async(place, mode, round_trip, home, origin):
                 if not route:
                     return False
                 names = _names(route)
-                if want and any(want in n or n in want for n in names if n):
+                if names - baseline_names:
                     return True
-                return bool(names - baseline_names)
+                # Same destination as the baseline counts only when the
+                # report itself is new (the car re-reported after our
+                # send). An untouched stale route must not confirm.
+                return bool(want and raw != baseline_raw and
+                            any(want in n or n in want for n in names if n))
 
             stops = [place] + ([home] if round_trip and home else [])
             for attempt in (1, 2):
@@ -486,104 +486,6 @@ async def _send_and_confirm_async(place, mode, round_trip, home, origin):
                 pass
     finally:
         await _close(client)
-
-
-async def _current_route_async():
-    client, tokens = await _open_client()
-    try:
-        _, vehicle_id = await _ids(client, tokens)
-        watch = _RouteWatch()
-        unsub = await client.subscribe_for_parallax_messages(
-            vehicle_id, watch.cb, rvms=[TRIP_INFO_RVM])
-        if unsub is None:
-            return None
-        try:
-            await watch.wait_for(lambda r: True, 15)
-            return parse_trip_info(watch.route) if watch.route else None
-        finally:
-            try:
-                await unsub()
-            except Exception:
-                pass
-    finally:
-        await _close(client)
-
-
-def current_route() -> dict | None:
-    """The route the car reports right now, or None when not navigating."""
-    return asyncio.run(_current_route_async())
-
-
-# ---------------------------------------------------------------------------
-# End trip (SendUpdatedTrip with an empty 'end_trip' message). Kept as a
-# utility for now; not wired to the dashboard in v1.
-# ---------------------------------------------------------------------------
-
-def _f_var(field: int, value: int) -> bytes:
-    out = bytearray()
-    tag = (field << 3) | 0
-    while True:
-        b = tag & 0x7F
-        tag >>= 7
-        if tag:
-            out.append(b | 0x80)
-        else:
-            out.append(b)
-            break
-    v = value
-    while True:
-        b = v & 0x7F
-        v >>= 7
-        if v:
-            out.append(b | 0x80)
-        else:
-            out.append(b)
-            break
-    return bytes(out)
-
-
-def _f_len(field: int, data: bytes) -> bytes:
-    out = bytearray()
-    tag = (field << 3) | 2
-    while True:
-        b = tag & 0x7F
-        tag >>= 7
-        if tag:
-            out.append(b | 0x80)
-        else:
-            out.append(b)
-            break
-    length = len(data)
-    while True:
-        b = length & 0x7F
-        length >>= 7
-        if length:
-            out.append(b | 0x80)
-        else:
-            out.append(b)
-            break
-    return bytes(out) + data
-
-
-def end_trip() -> bool:
-    async def run():
-        client, tokens = await _open_client()
-        try:
-            user_id, vehicle_id = await _ids(client, tokens)
-            msg = (_f_len(1, _f_len(1, f"end_trip_{int(time.time() * 1000)}".encode()))
-                   + _f_len(2, b"")
-                   + _f_len(3, _f_len(1, user_id.encode())))
-            now = time.time()
-            stamp = _f_var(1, int(now)) + _f_var(2, int((now % 1) * 1e9))
-            payload = base64.b64encode(
-                _f_len(10, _f_len(2, msg)) + _f_len(12, stamp)
-                + _f_len(16, uuid.uuid4().bytes)).decode()
-            data = await _gql(client, "SendUpdatedTrip", SEND_UPDATED_MUT,
-                              {"vehicleId": vehicle_id, "payload": payload})
-            return bool((data.get("sendParallaxPayload") or {}).get("success"))
-        finally:
-            await _close(client)
-    return asyncio.run(run())
 
 
 # ---------------------------------------------------------------------------
@@ -624,6 +526,12 @@ def start_send_job(place: dict, mode: str, round_trip: bool,
 
     threading.Thread(target=run, daemon=True).start()
     return job_id
+
+
+def send_in_progress() -> bool:
+    """True while any send job is still waiting on the car."""
+    with _JOBS_LOCK:
+        return any(j.get("state") == "sending" for j in _JOBS.values())
 
 
 def job_status(job_id: str) -> dict | None:

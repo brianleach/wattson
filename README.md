@@ -37,7 +37,8 @@ promises. Take it, run it, break it, make it yours.
 - **Drive history**, the record Rivian never kept
 - **Send destination**, send an address, a saved place, or a pasted map
   link to the car's navigation from the dashboard, with an energy check
-  at your real efficiency and confirmation from the car's own route report
+  at your real efficiency and confirmation from the car's own route report.
+  Requires a dashboard password (WATTSON_DASHBOARD_TOKEN) to be set
 - **Optional dashboard login**, password-protect your dashboard when exposing
   it through a tunnel
 

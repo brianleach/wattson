@@ -17,7 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ride the existing signed-in session only: no paired key, no
   Bluetooth. The cloud's "success" is not trusted; a send counts as
   confirmed only when the car reports the route itself, with one
-  automatic re-send if it never does.
+  automatic re-send if it never does. The nav endpoints stay off
+  until a dashboard password (WATTSON_DASHBOARD_TOKEN) is set, since
+  they act on the car and read its saved places and live location.
 
 ## [0.8.1] - 2026-10-21
 ### Fixed

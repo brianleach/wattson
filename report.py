@@ -632,7 +632,7 @@ table.drain tr:last-child td,table.ctab tr:last-child td{border-bottom:0}
     </div>
   </div>
   <div class="battbar__BATTCHG__"><div style="width:__SOCPCT__%">__BOLT__</div></div>
-<div class="heroloc" style="display:flex;align-items:center;justify-content:space-between;gap:12px"><span style="flex:1 1 auto;min-width:0">__LOCATION__</span><button type="button" onclick="openNavModal()" style="flex:0 0 auto;padding:7px 14px;border-radius:999px;border:1px solid #3a3f45;background:rgba(255,255,255,.05);color:#e8eaed;font-size:13px;font-weight:600;cursor:pointer">Send destination</button></div>
+<div class="heroloc" style="display:flex;align-items:center;justify-content:space-between;gap:12px"><span style="flex:1 1 auto;min-width:0">__LOCATION__</span>__NAVBTN__</div>
   <div class="grid4">
     <a class="stat" href="#savings"><div class="k">Lifetime savings vs gas</div>
       <div class="v green">__GASSAVE__</div>
@@ -684,7 +684,7 @@ bracket, between polls.</p>
 <button id="toTop" aria-label="Back to top"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
 <script>
 __SCRIPT__
-</script><script>var scrollRaf=null;(function(){var ease=function(t){return t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2};document.querySelectorAll('a[href^="#"]').forEach(function(a){a.addEventListener('click',function(e){var el=document.querySelector(a.getAttribute('href'));if(!el)return;e.preventDefault();var y=el.getBoundingClientRect().top+window.scrollY-document.querySelector('.sitenav').getBoundingClientRect().bottom-12;cancelAnimationFrame(scrollRaf);var s=window.scrollY,d=y-s,dur=900,t0=performance.now();(function step(t){var p=Math.min((t-t0)/dur,1);window.scrollTo(0,s+d*ease(p));if(p<1)scrollRaf=requestAnimationFrame(step);})(t0);});});})();</script><script>(function(){var links={};document.querySelectorAll('.nav-links a[href^="#"]').forEach(function(a){links[a.getAttribute('href').slice(1)]=a});var ids=Object.keys(links);var secs=ids.map(function(id){return document.getElementById(id)}).filter(Boolean).sort(function(a,b){return a.getBoundingClientRect().top-b.getBoundingClientRect().top});if(!secs.length)return;var cur='',locked=null,lockTimer=null;function setActive(id){if(id===cur)return;cur=id;ids.forEach(function(k){links[k].classList.toggle('active',k===id)})}function update(){if(locked){setActive(locked);return}var line=120,id='';secs.forEach(function(s){if(s.getBoundingClientRect().top<=line){id=s.id}});var lastSec=secs[secs.length-1];var distToBottom=document.documentElement.scrollHeight-(window.innerHeight+window.scrollY);if(lastSec&&distToBottom<=300&&lastSec.getBoundingClientRect().top<window.innerHeight){id=lastSec.id}setActive(id)}document.querySelectorAll('.nav-links a[href^="#"]').forEach(function(a){a.addEventListener('click',function(){locked=a.getAttribute('href').slice(1);setActive(locked);clearTimeout(lockTimer);lockTimer=setTimeout(function(){locked=null;update()},1000)})});var ticking=false;window.addEventListener('scroll',function(){if(ticking)return;ticking=true;requestAnimationFrame(function(){ticking=false;update()})},{passive:true});update();})();</script><form id="costform" method="POST" action="/api/charge-cost-form" style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0"><input type="hidden" name="charge_id" id="form_charge_id"><input type="hidden" name="cost_per_kwh" id="form_cost_per_kwh"><input type="hidden" name="start_ts" id="form_start_ts"></form><div id="costmodal" style="display:none;position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.7);align-items:center;justify-content:center"><div style="background:#1a1d21;border:1px solid #333;border-radius:16px;padding:24px;max-width:320px;width:90%"><h3 style="margin:0 0 12px">DC charging cost</h3><p class="sub" style="margin:0 0 12px">Enter what you paid per kWh:</p><form onsubmit="saveCost();return false;" style="margin:0"><input id="costinput" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.48" style="width:100%;padding:10px;font-size:16px;border-radius:8px;border:1px solid #444;background:#0b0d10;color:#fff;box-sizing:border-box"><div style="display:flex;gap:10px;margin-top:16px"><button type="submit" style="flex:1;padding:10px;border-radius:8px;border:none;background:#7ed321;color:#000;font-weight:600;cursor:pointer">Save</button><button type="button" onclick="closeCostModal()" style="flex:1;padding:10px;border-radius:8px;border:1px solid #444;background:transparent;color:#fff;cursor:pointer">Cancel</button></div><div style="margin-top:12px;text-align:center"><a class="cost-action" href="#" onclick="clearCost();return false;" style="color:#888;font-size:12px">clear entered cost</a></div></form></div></div><script>var _costChargeId=null;var _costStartTs=null;function openCostModal(chargeId,currentVal,startTs){_costChargeId=chargeId;_costStartTs=(startTs===undefined||startTs===null)?'':startTs;document.getElementById('costinput').value=((currentVal===null||currentVal===undefined)?'':currentVal);document.getElementById('costmodal').style.display='flex';document.getElementById('costinput').focus();}function closeCostModal(){document.getElementById('costmodal').style.display='none';_costChargeId=null;}function saveCost(){var v=parseFloat(document.getElementById('costinput').value);if(v===null||v===undefined||isNaN(v)||v<0){alert('Enter a valid price');return;}document.getElementById('form_charge_id').value=_costChargeId;document.getElementById('form_start_ts').value=_costStartTs;document.getElementById('form_cost_per_kwh').value=v;document.getElementById('costform').submit();}function clearCost(){if(!confirm('Clear the entered cost for this session?'))return;document.getElementById('form_charge_id').value=_costChargeId;document.getElementById('form_start_ts').value=_costStartTs;document.getElementById('form_cost_per_kwh').value='';document.getElementById('costform').submit();}document.getElementById('costmodal').addEventListener('click',function(e){if(e.target===this)closeCostModal();});document.addEventListener('keydown',function(e){if(e.key==='Escape'){var m=document.getElementById('costmodal');if(m&&m.style.display!=='none')closeCostModal();}});</script><div id="navmodal" style="display:none;position:fixed;inset:0;z-index:101;color-scheme:dark;
+</script><script>var scrollRaf=null;(function(){var ease=function(t){return t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2};document.querySelectorAll('a[href^="#"]').forEach(function(a){a.addEventListener('click',function(e){var el=document.querySelector(a.getAttribute('href'));if(!el)return;e.preventDefault();var y=el.getBoundingClientRect().top+window.scrollY-document.querySelector('.sitenav').getBoundingClientRect().bottom-12;cancelAnimationFrame(scrollRaf);var s=window.scrollY,d=y-s,dur=900,t0=performance.now();(function step(t){var p=Math.min((t-t0)/dur,1);window.scrollTo(0,s+d*ease(p));if(p<1)scrollRaf=requestAnimationFrame(step);})(t0);});});})();</script><script>(function(){var links={};document.querySelectorAll('.nav-links a[href^="#"]').forEach(function(a){links[a.getAttribute('href').slice(1)]=a});var ids=Object.keys(links);var secs=ids.map(function(id){return document.getElementById(id)}).filter(Boolean).sort(function(a,b){return a.getBoundingClientRect().top-b.getBoundingClientRect().top});if(!secs.length)return;var cur='',locked=null,lockTimer=null;function setActive(id){if(id===cur)return;cur=id;ids.forEach(function(k){links[k].classList.toggle('active',k===id)})}function update(){if(locked){setActive(locked);return}var line=120,id='';secs.forEach(function(s){if(s.getBoundingClientRect().top<=line){id=s.id}});var lastSec=secs[secs.length-1];var distToBottom=document.documentElement.scrollHeight-(window.innerHeight+window.scrollY);if(lastSec&&distToBottom<=300&&lastSec.getBoundingClientRect().top<window.innerHeight){id=lastSec.id}setActive(id)}document.querySelectorAll('.nav-links a[href^="#"]').forEach(function(a){a.addEventListener('click',function(){locked=a.getAttribute('href').slice(1);setActive(locked);clearTimeout(lockTimer);lockTimer=setTimeout(function(){locked=null;update()},1000)})});var ticking=false;window.addEventListener('scroll',function(){if(ticking)return;ticking=true;requestAnimationFrame(function(){ticking=false;update()})},{passive:true});update();})();</script><form id="costform" method="POST" action="/api/charge-cost-form" style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0"><input type="hidden" name="charge_id" id="form_charge_id"><input type="hidden" name="cost_per_kwh" id="form_cost_per_kwh"><input type="hidden" name="start_ts" id="form_start_ts"></form><div id="costmodal" style="display:none;position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.7);align-items:center;justify-content:center"><div style="background:#1a1d21;border:1px solid #333;border-radius:16px;padding:24px;max-width:320px;width:90%"><h3 style="margin:0 0 12px">DC charging cost</h3><p class="sub" style="margin:0 0 12px">Enter what you paid per kWh:</p><form onsubmit="saveCost();return false;" style="margin:0"><input id="costinput" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.48" style="width:100%;padding:10px;font-size:16px;border-radius:8px;border:1px solid #444;background:#0b0d10;color:#fff;box-sizing:border-box"><div style="display:flex;gap:10px;margin-top:16px"><button type="submit" style="flex:1;padding:10px;border-radius:8px;border:none;background:#7ed321;color:#000;font-weight:600;cursor:pointer">Save</button><button type="button" onclick="closeCostModal()" style="flex:1;padding:10px;border-radius:8px;border:1px solid #444;background:transparent;color:#fff;cursor:pointer">Cancel</button></div><div style="margin-top:12px;text-align:center"><a class="cost-action" href="#" onclick="clearCost();return false;" style="color:#888;font-size:12px">clear entered cost</a></div></form></div></div><script>var _costChargeId=null;var _costStartTs=null;function openCostModal(chargeId,currentVal,startTs){_costChargeId=chargeId;_costStartTs=(startTs===undefined||startTs===null)?'':startTs;document.getElementById('costinput').value=((currentVal===null||currentVal===undefined)?'':currentVal);document.getElementById('costmodal').style.display='flex';document.getElementById('costinput').focus();}function closeCostModal(){document.getElementById('costmodal').style.display='none';_costChargeId=null;}function saveCost(){var v=parseFloat(document.getElementById('costinput').value);if(v===null||v===undefined||isNaN(v)||v<0){alert('Enter a valid price');return;}document.getElementById('form_charge_id').value=_costChargeId;document.getElementById('form_start_ts').value=_costStartTs;document.getElementById('form_cost_per_kwh').value=v;document.getElementById('costform').submit();}function clearCost(){if(!confirm('Clear the entered cost for this session?'))return;document.getElementById('form_charge_id').value=_costChargeId;document.getElementById('form_start_ts').value=_costStartTs;document.getElementById('form_cost_per_kwh').value='';document.getElementById('costform').submit();}document.getElementById('costmodal').addEventListener('click',function(e){if(e.target===this)closeCostModal();});document.addEventListener('keydown',function(e){if(e.key==='Escape'){var m=document.getElementById('costmodal');if(m&&m.style.display!=='none')closeCostModal();}});</script><div id="navmodal" role="dialog" aria-modal="true" aria-label="Send destination" style="display:none;position:fixed;inset:0;z-index:101;color-scheme:dark;
 background:rgba(0,0,0,.7);align-items:flex-start;justify-content:center;overflow:hidden;padding:24px 12px 12px;box-sizing:border-box">
 <div style="background:#1a1d21;border:1px solid #333;border-radius:16px;
 padding:18px;max-width:560px;width:100%;max-height:calc(100vh - 36px);max-height:calc(100dvh - 36px);margin:0;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden">
@@ -694,7 +694,7 @@ padding:18px;max-width:560px;width:100%;max-height:calc(100vh - 36px);max-height
 </div>
 <p class="sub" style="margin:4px 0 12px">The car wakes up and starts navigating.</p>
 <div style="position:relative">
-<input id="navq" type="text" placeholder="Search a place or address" autocomplete="off"
+<input id="navq" type="text" placeholder="Search a place or address" autocomplete="off" aria-label="Search a place or address"
 style="width:100%;padding:10px 40px 10px 10px;font-size:16px;border-radius:8px;
 border:1px solid #444;background:#0b0d10;color:#fff;box-sizing:border-box">
 <button type="button" id="navclear" onclick="navClearSearch()" aria-label="Clear search" style="display:none;position:absolute;right:6px;top:50%;transform:translateY(-50%);width:28px;height:28px;border-radius:999px;border:none;background:#2c2f34;color:#fff;cursor:pointer;font-size:17px;line-height:28px;padding:0">×</button>
@@ -732,6 +732,8 @@ border:1px solid #444;background:transparent;color:#fff;cursor:pointer">Cancel</
 var _navCar = null, _navWhMi = 380, _navSaved = [], _navListArr = [],
     _navPlace = null, _navSelIdx = null, _navMode = 'direct', _navRound = false,
     _navJob = null, _navTimer = null, _navSearchTimer = null, _navTab = 'rec';
+var _navUsableKwh = 87.9;  // refreshed from /api/nav/state (config.USABLE_KWH)
+var NAV_ROAD_FACTOR = 1.3;  // straight-line distance to road estimate
 function openNavModal() {
   _navPlace = null; _navSelIdx = null; _navMode = 'direct'; _navRound = false; _navJob = null;
   _navTab = 'rec';
@@ -743,7 +745,13 @@ function openNavModal() {
   document.getElementById('navlist').innerHTML = '<p class="sub">Loading your places...</p>';
   navSetSend(false, 'Send');
   fetch('/api/nav/state').then(function(r) { return r.json(); }).then(function(j) {
-    _navCar = j.car || null; _navWhMi = j.wh_mi || 380; _navSaved = j.places || [];
+    if (j && j.ok === false && j.error) {
+      document.getElementById('navlist').innerHTML = '<p class="sub">' + navEsc(j.error) + '</p>';
+      return;
+    }
+    _navCar = j.car || null; _navWhMi = j.wh_mi || 380;
+    if (j.usable_kwh) _navUsableKwh = j.usable_kwh;
+    _navSaved = j.places || [];
     navShowBrowse();
   }).catch(function() {
     document.getElementById('navlist').innerHTML = '<p class="sub">Could not load your places. Search still works.</p>';
@@ -860,7 +868,7 @@ document.getElementById('navq').addEventListener('input', function() {
     }).catch(function() {
       document.getElementById('navlist').innerHTML = '<p class="sub">Search failed. Try again.</p>';
     });
-  }, 350);
+  }, 800);
 });
 function navPick(i, row) {
   _navPlace = _navListArr[i]; _navSelIdx = i; _navMode = 'direct'; _navRound = false;
@@ -884,10 +892,10 @@ function _havMi(lat1, lon1, lat2, lon2) {
 function navEstimate() {
   if (!_navCar || !_navPlace || _navPlace.lat === null || _navPlace.lat === undefined) return null;
   if (_navCar.lat === null || _navCar.soc === null || _navCar.soc === undefined) return null;
-  var roadMi = _havMi(_navCar.lat, _navCar.lon, _navPlace.lat, _navPlace.lon) * 1.3;
+  var roadMi = _havMi(_navCar.lat, _navCar.lon, _navPlace.lat, _navPlace.lon) * NAV_ROAD_FACTOR;
   var kwh = roadMi * _navWhMi / 1000;
-  var arrival = _navCar.soc - kwh / 87.9 * 100;
-  return {roadMi: roadMi, arrival: arrival, rtArrival: _navCar.soc - 2 * kwh / 87.9 * 100};
+  var arrival = _navCar.soc - kwh / _navUsableKwh * 100;
+  return {roadMi: roadMi, arrival: arrival, rtArrival: _navCar.soc - 2 * kwh / _navUsableKwh * 100};
 }
 function navRenderEnergy() {
   var line = document.getElementById('navenergy');
@@ -933,10 +941,10 @@ function navPlan() {
       j.drive_minutes + ' min of driving, arriving at about ' +
       Math.round(j.final_arrival_soc !== null ? j.final_arrival_soc : j.arrival_soc) + '%.';
     if (j.chargers && j.chargers.length) {
-      txt += ' Charging stops: ' + j.chargers.map(function(c) { return navEsc(c.name) + ' (~' + c.minutes + ' min)'; }).join(', ') + '.';
+      txt += ' Charging stops: ' + j.chargers.map(function(c) { return c.name + ' (~' + c.minutes + ' min)'; }).join(', ') + '.';
     } else { txt += ' No charging stop needed.'; }
     if (!j.reachable) txt += ' Even with charging, the car says this is not reachable right now.';
-    document.getElementById('navplan').innerHTML = txt;
+    document.getElementById('navplan').textContent = txt;
     _navMode = 'trip';
     navSetSend(true, 'Send trip');
   }).catch(function() {
@@ -967,9 +975,9 @@ function navSend() {
           var names = (job.route.destinations || []).map(function(d) { return d.name; }).join(', ');
           var txt = 'Car is navigating to ' + names + '.';
           if (job.route.chargers && job.route.chargers.length) {
-            txt += ' Charging stops the car planned: ' + job.route.chargers.map(function(c) { return navEsc(c.name) + ' (~' + c.minutes + ' min)'; }).join(', ') + '.';
+            txt += ' Charging stops the car planned: ' + job.route.chargers.map(function(c) { return c.name + ' (~' + c.minutes + ' min)'; }).join(', ') + '.';
           }
-          document.getElementById('navstatus').innerHTML = txt;
+          document.getElementById('navstatus').textContent = txt;
         } else if (job.state === 'failed') {
           clearInterval(_navTimer); _navTimer = null;
           document.getElementById('navstatus').textContent = job.error || 'The send failed.';
@@ -2592,6 +2600,8 @@ def generate() -> None:
         "__BOLT__": (_BOLT_SVG if live and soc is not None and soc >= 8
                      else ""),
         "__LOCATION__": location_html,
+        "__NAVBTN__": ("" if os.environ.get("WATTSON_DEMO") else
+                      '<button type="button" onclick="openNavModal()" style="flex:0 0 auto;padding:7px 14px;border-radius:999px;border:1px solid #3a3f45;background:rgba(255,255,255,.05);color:#e8eaed;font-size:13px;font-weight:600;cursor:pointer">Send destination</button>'),
         "__IDLESTAT__": idle_stat,
         "__TIRETILE__": tiretile,
         "__LIFEMI__": f"{lifetime_mpk:.2f}" if lifetime_mpk else "-",

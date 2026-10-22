@@ -202,6 +202,13 @@ Hobby project, no SLA. Issues and pull requests welcome.
 Built something cool with Wattson? I'd love to hear about it. And pay
 it forward: keep it open, keep it fun.
 
+## Credits
+
+Map tiles by [Esri](https://www.esri.com) (World Dark Gray
+Canvas). Rivian API access via the
+[rivian-python-client](https://pypi.org/project/rivian-python-client/)
+library (MIT).
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

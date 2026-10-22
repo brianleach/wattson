@@ -319,6 +319,11 @@ class NavMapTests(unittest.TestCase):
                             headers=AUTH)
         self.assertEqual(render.call_args.kwargs.get("z"), 15)
 
+    def test_lost_job_message_is_wired(self):
+        js = (Path(__file__).parent.parent / "static" /
+              "dashboard.js").read_text(encoding="utf-8")
+        self.assertIn("Lost track of that send", js)
+
     def test_places_failure_message_is_wired(self):
         js = (Path(__file__).parent.parent / "static" /
               "dashboard.js").read_text(encoding="utf-8")

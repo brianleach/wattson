@@ -480,7 +480,17 @@ function navSend() {
     _navTimer = setInterval(function() {
       waited += 3;
       fetch('/api/nav/status?job=' + _navJob).then(function(r) { return r.json(); }).then(function(s) {
-        if (!s.ok) return;
+        if (!s.ok) {
+          // The server keeps send jobs in memory, so a service
+          // restart loses them and this poll starts answering
+          // "unknown job". Say so and stop, instead of waiting
+          // forever: the car may well have received the place.
+          clearInterval(_navTimer); _navTimer = null;
+          document.getElementById('navstatus').textContent =
+            'Lost track of that send. The car may still have received it, check the car screen before sending again.';
+          navSetSend(true, _navMode === 'trip' ? 'Send trip' : 'Send');
+          return;
+        }
         var job = s.job;
         if (job.state === 'confirmed') {
           clearInterval(_navTimer); _navTimer = null;
@@ -501,7 +511,12 @@ function navSend() {
           clearInterval(_navTimer); _navTimer = null;
           document.getElementById('navstatus').textContent = 'Still no confirmation from the car. Check the car screen before sending again.';
         }
-      }).catch(function() {});
+      }).catch(function() {
+        if (waited > 170 && _navTimer) {
+          clearInterval(_navTimer); _navTimer = null;
+          document.getElementById('navstatus').textContent = 'Still no confirmation from the car. Check the car screen before sending again.';
+        }
+      });
     }, 3000);
   }).catch(function() {
     document.getElementById('navstatus').textContent = 'Send failed. Try again.';

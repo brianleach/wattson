@@ -38,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   policy.
 
 ### Fixed
+- If the API service restarted while a send was being
+  confirmed, the dashboard polled a job the new process no
+  longer knew and waited forever. It now reports that it
+  lost track of the send (the car may still have received
+  it) and stops polling.
 - Send confirmation could be fooled when no baseline route was
   captured before the send (the car reported nothing during the
   baseline wait): any later route counted as confirmation,

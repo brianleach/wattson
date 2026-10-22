@@ -470,8 +470,13 @@ def nav_map():
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
         return "Bad coordinates", 400
     try:
+        zoom = int(request.args.get("z", 14))
+    except (TypeError, ValueError):
+        zoom = 14
+    zoom = max(3, min(18, zoom))
+    try:
         import report
-        img = report._render_point_map(lat, lon, z=10)
+        img = report._render_point_map(lat, lon, z=zoom)
     except Exception:
         app.logger.exception("nav map render failed")
         img = None

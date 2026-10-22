@@ -22,10 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   they act on the car and read its saved places and live location.
 
 ### Changed
-- The Send destination confirmation map renders at zoom 10
-  for regional context (trip and charge maps are unchanged),
-  and clicking it opens the place in Google Maps in a new
-  tab.
+- The Send destination confirmation map renders at zoom 14
+  (trip and charge maps are unchanged), and clicking it opens
+  the place in Google Maps in a new tab.
 - The dashboard's CSS and JavaScript moved out of the generated
   HTML into static/dashboard.css and static/dashboard.js, which the
   web server serves as their own files (the page links them).
@@ -39,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   policy.
 
 ### Fixed
+- Changing the confirmation map's zoom had no visible effect
+  for places already viewed: browsers cache each rendered map
+  for a day under a URL that did not include the zoom, so they
+  kept serving the old picture. The zoom is now part of the
+  request URL, so a zoom change fetches a fresh map.
 - The Cancel button in the Send destination panel closed the
   whole modal; it now just deselects the place and returns to
   the list. The modal's × (or Escape, or a backdrop click)

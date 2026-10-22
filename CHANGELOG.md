@@ -22,9 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   they act on the car and read its saved places and live location.
 
 ### Changed
-- The Send destination confirmation map renders one zoom level
-  wider (trip and charge maps are unchanged), and clicking it
-  opens the place in Google Maps in a new tab.
+- The Send destination confirmation map renders at zoom 10
+  for regional context (trip and charge maps are unchanged),
+  and clicking it opens the place in Google Maps in a new
+  tab.
 - The dashboard's CSS and JavaScript moved out of the generated
   HTML into static/dashboard.css and static/dashboard.js, which the
   web server serves as their own files (the page links them).

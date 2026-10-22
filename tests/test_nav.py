@@ -240,7 +240,7 @@ class NavMapTests(unittest.TestCase):
                                 headers=AUTH)
         self.assertEqual(r.status_code, 200)
         self.assertEqual(render.call_args.args, (33.6, -117.7))
-        self.assertEqual(render.call_args.kwargs.get("z"), 15)
+        self.assertEqual(render.call_args.kwargs.get("z"), 10)
 
     def test_map_image_opens_google_maps(self):
         import report

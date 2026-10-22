@@ -20,6 +20,7 @@ services:
       - ./data:/data
       - ./www:/app/www
       - ./assets:/app/assets:ro
+      - ./static:/app/static:ro
     restart: unless-stopped
 
   api:
@@ -36,6 +37,7 @@ services:
       - ./data:/data
       - ./www:/app/www
       - ./assets:/app/assets:ro
+      - ./static:/app/static:ro
     command: ["python", "api.py"]
     restart: unless-stopped
 

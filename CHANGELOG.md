@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until a dashboard password (WATTSON_DASHBOARD_TOKEN) is set, since
   they act on the car and read its saved places and live location.
 
+### Changed
+- The dashboard's CSS and JavaScript moved out of the generated
+  HTML into static/dashboard.css and static/dashboard.js, which the
+  web server serves as their own files (the page links them).
+  Demo builds still inline both files, so the demo page remains a
+  single self-contained file.
+
 ## [0.8.1] - 2026-10-21
 ### Fixed
 - Phantom drain could book driving energy as parked drain. A park's

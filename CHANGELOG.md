@@ -38,6 +38,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   policy.
 
 ### Fixed
+- Send confirmation could be fooled when no baseline route was
+  captured before the send (the car reported nothing during the
+  baseline wait): any later route counted as confirmation,
+  including the stale route a waking car re-reports. Such a
+  report now becomes the baseline unless it names the place
+  that was sent.
+- The confirmation fingerprint included charger minutes and
+  unrounded coordinates, so a routine re-plan of the car's
+  existing route could pass as a changed plan. It now compares
+  destinations (coordinates rounded to about 11 m) and charger
+  names only.
+- A send job stuck in "sending" (a network wait that never
+  returns) blocked every later send until the process
+  restarted. Jobs still running after 10 minutes are now
+  reaped as timed out.
+- The map zoom clamp allowed 17 and 18, where the tile
+  provider serves a placeholder tile that the tile cache would
+  then keep for days. The ceiling is 16, the last real zoom.
+- The Send destination focus trap cycled through the hidden
+  selection panel's buttons when nothing was selected; it now
+  cycles visible elements only. The map link also gained
+  rel="noreferrer" alongside noopener.
+- The CI email check used a regex lookahead that grep -E does
+  not support, so it never matched anything. It now matches
+  addresses first and filters out the example placeholders.
+- Session cookies are signed with a key derived from the
+  dashboard token under a domain separator, not the raw token.
+- The inline-style guard test missed single-quoted attributes,
+  interpolated property names and values, and attributes split
+  across string literals; it catches all of them now, and new
+  tests cover the round-trip coercion, the zoom clamp, and the
+  places-failure message. The README credits the map tile
+  provider and the Rivian API client library.
 - The places list could claim "No recent places" when Rivian's
   API timed out during the load. The endpoint now retries a
   failed fetch once, and when the places genuinely cannot load

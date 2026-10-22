@@ -521,7 +521,7 @@ bracket, between polls.</p>
 <div id="navlist" class="navlist"></div>
 <div id="navselhome"></div>
 <div id="navsel" onclick="event.stopPropagation()" class="navsel hidden">
-<a id="navmaplink" target="_blank" rel="noopener" title="Open in Google Maps"><img id="navmap" alt="Map of the selected place" class="navmap hidden"></a>
+<a id="navmaplink" target="_blank" rel="noopener noreferrer" title="Open in Google Maps"><img id="navmap" alt="Map of the selected place" class="navmap hidden"></a>
 <p id="navenergy" class="sub m1000"></p>
 <div id="navtight" class="navtight hidden">
 <div class="tight-row">

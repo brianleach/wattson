@@ -86,6 +86,46 @@ class NavGateTests(unittest.TestCase):
                 headers=AUTH)
         self.assertEqual(r.status_code, 409)
 
+    def _seed_car_row(self):
+        with closing(sqlite3.connect(self.database)) as con, con:
+            con.execute(
+                "INSERT INTO snapshots (ts, soc, range_mi, lat, lon)"
+                " VALUES (1700000000, 55.0, 180.0, 34.0, -118.0)")
+
+    def test_round_trip_coerces_direct_to_trip(self):
+        self.patch_all(SECRET)
+        self._seed_car_row()
+        home = {"name": "Home", "address": "", "lat": 34.0,
+                "lon": -118.0, "place_id": None,
+                "type": "FAVORITE_HOME"}
+        with mock.patch("api._saved_places_cached",
+                        return_value=([home], True)), \
+                mock.patch("nav.start_send_job",
+                           return_value="job1") as start:
+            r = self.client.post(
+                "/api/nav/send",
+                json={"place": {"name": "B", "lat": 34.1,
+                                "lon": -118.1},
+                      "mode": "direct", "round_trip": True},
+                headers=AUTH)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(start.call_args.args[1], "trip")
+        self.assertTrue(start.call_args.args[2])
+
+    def test_round_trip_without_home_is_a_clear_400(self):
+        self.patch_all(SECRET)
+        self._seed_car_row()
+        with mock.patch("api._saved_places_cached",
+                        return_value=([], True)), \
+                mock.patch("api._home_place", return_value=None):
+            r = self.client.post(
+                "/api/nav/send",
+                json={"place": {"name": "B", "lat": 34.1,
+                                "lon": -118.1},
+                      "round_trip": True},
+                headers=AUTH)
+        self.assertEqual(r.status_code, 400)
+
     def test_map_rejects_out_of_range_coordinates(self):
         self.patch_all(SECRET)
         r = self.client.get("/api/nav/map?lat=999&lon=0", headers=AUTH)
@@ -201,6 +241,22 @@ class NavUnitTests(unittest.TestCase):
                 {"name": "B", "lat": 34.1, "lon": -118.1},
                 "direct", False, None, {"lat": 34.0, "lon": -118.0}))
 
+    def test_start_send_job_reaps_a_stale_send(self):
+        import time as _time
+
+        async def fake_send(*args):
+            return {"destinations": []}
+
+        stale = {"state": "sending", "ts": _time.time() - 3600}
+        with mock.patch.dict(nav._JOBS, {"x": stale}), \
+                mock.patch.object(nav, "_send_and_confirm_async",
+                                  fake_send):
+            job_id = nav.start_send_job(
+                {"name": "B", "lat": 34.1, "lon": -118.1},
+                "direct", False, None, {"lat": 34.0, "lon": -118.0})
+        self.assertIsNotNone(job_id)
+        self.assertEqual(stale["state"], "failed")
+
     def test_route_fingerprint(self):
         route = {"destinations": [{"name": "A", "lat": 1.0, "lon": 2.0,
                                    "place_id": "p"}],
@@ -210,8 +266,14 @@ class NavUnitTests(unittest.TestCase):
                 "chargers": [{"name": "C", "minutes": 10}]}
         self.assertEqual(nav._route_fingerprint(route),
                          nav._route_fingerprint(same))
+        replanned = {"destinations": [{"name": "A", "lat": 1.00001,
+                                       "lon": 2.00004,
+                                       "place_id": "p"}],
+                     "chargers": [{"name": "C", "minutes": 25}]}
+        self.assertEqual(nav._route_fingerprint(route),
+                         nav._route_fingerprint(replanned))
         changed = {"destinations": route["destinations"],
-                   "chargers": [{"name": "C", "minutes": 12}]}
+                   "chargers": [{"name": "D", "minutes": 12}]}
         self.assertNotEqual(nav._route_fingerprint(route),
                             nav._route_fingerprint(changed))
         self.assertIsNone(nav._route_fingerprint(None))
@@ -241,6 +303,27 @@ class NavMapTests(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(render.call_args.args, (33.6, -117.7))
         self.assertEqual(render.call_args.kwargs.get("z"), 15)
+
+    def test_map_zoom_is_clamped_to_the_tile_ceiling(self):
+        with mock.patch("report._render_point_map",
+                        return_value=b"jpeg") as render:
+            r = self.client.get(
+                "/api/nav/map?lat=33.6&lon=-117.7&z=99", headers=AUTH)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(render.call_args.kwargs.get("z"), 16)
+
+    def test_map_zoom_bad_value_uses_the_default(self):
+        with mock.patch("report._render_point_map",
+                        return_value=b"jpeg") as render:
+            self.client.get("/api/nav/map?lat=33.6&lon=-117.7&z=abc",
+                            headers=AUTH)
+        self.assertEqual(render.call_args.kwargs.get("z"), 15)
+
+    def test_places_failure_message_is_wired(self):
+        js = (Path(__file__).parent.parent / "static" /
+              "dashboard.js").read_text(encoding="utf-8")
+        self.assertIn("could not load just now", js)
+        self.assertIn("places_fresh", js)
 
     def test_map_image_opens_google_maps(self):
         import report
@@ -274,6 +357,42 @@ class SavedPlacesCacheTests(unittest.TestCase):
             places, fresh = api._saved_places_cached()
         self.assertFalse(fresh)
         self.assertEqual(places, [])
+
+
+class ConfirmerTests(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch.object(nav, "parse_trip_info",
+                                    lambda raw: raw)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @staticmethod
+    def route(name, lat=34.0, lon=-118.0, chargers=()):
+        return {"destinations": [{"name": name, "lat": lat,
+                                  "lon": lon, "place_id": None}],
+                "chargers": list(chargers)}
+
+    def test_no_baseline_other_route_becomes_the_baseline(self):
+        c = nav._Confirmer(None, "moon house")
+        self.assertFalse(c.check(self.route("Irvine Spectrum")))
+        self.assertTrue(c.check(self.route("Moon House")))
+
+    def test_no_baseline_sent_place_confirms(self):
+        c = nav._Confirmer(None, "moon house")
+        self.assertTrue(c.check(self.route("Moon House")))
+
+    def test_baseline_replan_does_not_confirm(self):
+        base = self.route("Moon House",
+                          chargers=[{"name": "C", "minutes": 10}])
+        c = nav._Confirmer(base, "moon house")
+        jittered = self.route(
+            "Moon House", lat=34.00001,
+            chargers=[{"name": "C", "minutes": 22}])
+        self.assertFalse(c.check(jittered))
+
+    def test_baseline_new_destination_confirms(self):
+        c = nav._Confirmer(self.route("Home"), "moon house")
+        self.assertTrue(c.check(self.route("Moon House")))
 
 
 if __name__ == "__main__":

@@ -475,7 +475,9 @@ def nav_map():
         zoom = int(request.args.get("z", 15))
     except (TypeError, ValueError):
         zoom = 15
-    zoom = max(3, min(18, zoom))
+    # 16 is the tile ceiling: past it the provider serves a
+    # placeholder tile, which the tile cache would keep for days.
+    zoom = max(3, min(16, zoom))
     try:
         import report
         img = report._render_point_map(lat, lon, z=zoom)

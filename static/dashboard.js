@@ -513,7 +513,12 @@ document.getElementById('navmodal').addEventListener('click', function(e) {
 });
 document.getElementById('navmodal').addEventListener('keydown', function(e) {
   if (e.key !== 'Tab') return;
-  var f = this.querySelectorAll('button, input, [href]');
+  // Visible elements only: the parked selection panel keeps its
+  // Send and Cancel buttons in the DOM while hidden, and focusing
+  // one of those would strand the keyboard user on invisible UI.
+  var f = Array.prototype.filter.call(
+    this.querySelectorAll('button, input, [href]'),
+    function(el) { return !el.disabled && el.offsetParent !== null; });
   if (!f.length) return;
   var first = f[0], last = f[f.length - 1];
   if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }

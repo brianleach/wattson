@@ -536,7 +536,7 @@ bracket, between polls.</p>
 <div id="navstatus" class="sub mt14"></div>
 <div class="btn-row">
 <button type="button" id="navsendbtn" onclick="navSend()" disabled class="btn-primary">Send</button>
-<button type="button" onclick="closeNavModal()" class="btn-ghost">Cancel</button>
+<button type="button" onclick="navDeselect()" class="btn-ghost">Cancel</button>
 </div>
 </div>
 </div></div>

@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   policy.
 
 ### Fixed
+- The Cancel button in the Send destination panel closed the
+  whole modal; it now just deselects the place and returns to
+  the list. The modal's × (or Escape, or a backdrop click)
+  remains the way to close it.
 - Send confirmation can no longer be fooled by the car
   re-reporting an unchanged route (traffic refresh, wake cycle):
   a same-destination confirmation now requires the plan itself

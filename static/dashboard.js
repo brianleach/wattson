@@ -282,6 +282,14 @@ function navParkSel() {
   if (sel) sel.classList.add('hidden');
   navClearRowSel();
 }
+
+function navDeselect() {
+  _navPlace = null; _navSelIdx = null; _navMode = 'direct'; _navRound = false;
+  document.getElementById('navplan').innerHTML = '';
+  document.getElementById('navstatus').textContent = '';
+  navParkSel();
+  navSetSend(false, 'Send');
+}
 function navClearRowSel() {
   var rows = document.querySelectorAll('#navlist .navrow');
   for (var r = 0; r < rows.length; r++) {

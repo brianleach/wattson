@@ -252,5 +252,29 @@ class NavMapTests(unittest.TestCase):
         self.assertIn("&z=14", js)
 
 
+class SavedPlacesCacheTests(unittest.TestCase):
+    def setUp(self):
+        self._orig = dict(api._saved_cache)
+        api._saved_cache.update(ts=0.0, places=[])
+        self.addCleanup(api._saved_cache.update, self._orig)
+
+    def test_transient_failure_is_retried(self):
+        place = {"name": "Home", "type": "FAVORITE_HOME"}
+        with mock.patch("nav.saved_places",
+                        side_effect=[Exception("timeout"),
+                                     [place]]) as fetch:
+            places, fresh = api._saved_places_cached()
+        self.assertEqual(fetch.call_count, 2)
+        self.assertTrue(fresh)
+        self.assertEqual(places, [place])
+
+    def test_persistent_failure_falls_back_not_fresh(self):
+        with mock.patch("nav.saved_places",
+                        side_effect=Exception("down")):
+            places, fresh = api._saved_places_cached()
+        self.assertFalse(fresh)
+        self.assertEqual(places, [])
+
+
 if __name__ == "__main__":
     unittest.main()

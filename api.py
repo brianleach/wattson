@@ -274,13 +274,15 @@ def _saved_places_cached():
     import nav
     if _time.time() - _saved_cache["ts"] < 300 and _saved_cache["places"]:
         return _saved_cache["places"], True
-    try:
-        places = nav.saved_places()
-        _saved_cache.update(ts=_time.time(), places=places)
-        return places, True
-    except Exception:
-        app.logger.exception("saved places fetch failed")
-        return _saved_cache["places"], False
+    for attempt in (1, 2):
+        try:
+            places = nav.saved_places()
+            _saved_cache.update(ts=_time.time(), places=places)
+            return places, True
+        except Exception:
+            app.logger.exception(
+                "saved places fetch failed (attempt %d)", attempt)
+    return _saved_cache["places"], False
 
 
 def _home_place(places):

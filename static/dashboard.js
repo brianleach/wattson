@@ -219,7 +219,7 @@ var _costChargeId=null;var _costStartTs=null;var _costOpener=null;function openC
 ;
 
 /* Send destination modal. */
-var _navCar = null, _navWhMi = 380, _navSaved = [], _navListArr = [],
+var _navCar = null, _navWhMi = 380, _navSaved = [], _navListArr = [], _navStale = false,
     _navPlace = null, _navSelIdx = null, _navMode = 'direct', _navRound = false,
     _navJob = null, _navTimer = null, _navTab = 'rec';
 var _navUsableKwh = 87.9;  // refreshed from /api/nav/state (config.USABLE_KWH)
@@ -242,6 +242,7 @@ function openNavModal() {
     _navCar = j.car || null; _navWhMi = j.wh_mi || 380;
     if (j.usable_kwh) _navUsableKwh = j.usable_kwh;
     _navSaved = j.places || [];
+    _navStale = (j.places_fresh === false);
     navShowBrowse();
   }).catch(function() {
     document.getElementById('navlist').innerHTML = '<p class="sub">Could not load your places. Search still works.</p>';
@@ -336,7 +337,9 @@ function navShowBrowse() {
   var html = '';
   _navListArr.forEach(function(p, i) { html += navRow(p, i); });
   document.getElementById('navlist').innerHTML = html ||
-    ('<p class="sub">' + (_navTab === 'fav' ? 'No favorites saved in Rivian.' : 'No recent places.') + '</p>');
+    ('<p class="sub">' + (_navStale ?
+      'Your places could not load just now. Close and reopen to retry, search still works.' :
+      (_navTab === 'fav' ? 'No favorites saved in Rivian.' : 'No recent places.')) + '</p>');
 }
 document.getElementById('navq').addEventListener('input', function() {
   navUpdateClear();

@@ -38,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   policy.
 
 ### Fixed
+- The places list could claim "No recent places" when Rivian's
+  API timed out during the load. The endpoint now retries a
+  failed fetch once, and when the places genuinely cannot load
+  the modal says so (search still works) instead of showing an
+  empty list.
 - Changing the confirmation map's zoom had no visible effect
   for places already viewed: browsers cache each rendered map
   for a day under a URL that did not include the zoom, so they

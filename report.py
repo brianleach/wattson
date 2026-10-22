@@ -521,7 +521,7 @@ bracket, between polls.</p>
 <div id="navlist" class="navlist"></div>
 <div id="navselhome"></div>
 <div id="navsel" onclick="event.stopPropagation()" class="navsel hidden">
-<img id="navmap" alt="Map of the selected place" class="navmap hidden">
+<a id="navmaplink" target="_blank" rel="noopener" title="Open in Google Maps"><img id="navmap" alt="Map of the selected place" class="navmap hidden"></a>
 <p id="navenergy" class="sub m1000"></p>
 <div id="navtight" class="navtight hidden">
 <div class="tight-row">
@@ -1122,12 +1122,11 @@ def _get_tile(z: int, tx: int, ty: int):
     return None
 
 
-def _render_point_map(lat: float, lon: float):
+def _render_point_map(lat: float, lon: float, z: int = 16):
     """Stitch the charge-location tile window. Returns JPEG bytes, or None
     when any tile can't be fetched."""
     import io
     from PIL import Image, ImageDraw
-    z = 16
     W, H = 512, 256
     gx, gy = _merc(lon, lat, z)
     # Tile range covering the centered window, with one tile of slack

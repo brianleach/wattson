@@ -471,7 +471,7 @@ def nav_map():
         return "Bad coordinates", 400
     try:
         import report
-        img = report._render_point_map(lat, lon)
+        img = report._render_point_map(lat, lon, z=15)
     except Exception:
         app.logger.exception("nav map render failed")
         img = None

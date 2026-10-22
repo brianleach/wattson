@@ -376,6 +376,18 @@ function navPick(i, row) {
     img.src = '/api/nav/map?lat=' + _navPlace.lat + '&lon=' + _navPlace.lon;
     img.classList.remove('hidden');
   } else { img.classList.add('hidden'); }
+
+  var mapLink = document.getElementById('navmaplink');
+  if (mapLink) {
+    if (_navPlace.lat !== null && _navPlace.lat !== undefined) {
+      mapLink.href = _navPlace.place_id ?
+        'https://www.google.com/maps/search/?api=1&query=' +
+          encodeURIComponent(_navPlace.name) + '&query_place_id=' +
+          encodeURIComponent(_navPlace.place_id) :
+        'https://www.google.com/maps/search/?api=1&query=' +
+          _navPlace.lat + ',' + _navPlace.lon;
+    } else { mapLink.removeAttribute('href'); }
+  }
   navExpandSel(row);
   navSetSend(true, 'Send');
   navRenderEnergy();

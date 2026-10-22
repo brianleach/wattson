@@ -217,5 +217,39 @@ class NavUnitTests(unittest.TestCase):
         self.assertIsNone(nav._route_fingerprint(None))
 
 
+class NavMapTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.database = Path(self.temp.name) / "tracker.db"
+        with closing(sqlite3.connect(self.database)) as con:
+            con.executescript(db.SCHEMA)
+        self.client = api.app.test_client()
+        for target, value in [
+            ("api.auth", DashboardAuth(SECRET, lambda: 1700000000)),
+            ("api.DB_PATH", self.database),
+        ]:
+            patcher = mock.patch(target, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_map_renders_at_the_wider_zoom(self):
+        with mock.patch("report._render_point_map",
+                        return_value=b"jpeg") as render:
+            r = self.client.get("/api/nav/map?lat=33.6&lon=-117.7",
+                                headers=AUTH)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(render.call_args.args, (33.6, -117.7))
+        self.assertEqual(render.call_args.kwargs.get("z"), 15)
+
+    def test_map_image_opens_google_maps(self):
+        import report
+        self.assertIn('id="navmaplink"', report.HTML_TEMPLATE)
+        js = (Path(__file__).parent.parent / "static" /
+              "dashboard.js").read_text(encoding="utf-8")
+        self.assertIn("google.com/maps/search/?api=1", js)
+        self.assertIn("query_place_id", js)
+
+
 if __name__ == "__main__":
     unittest.main()

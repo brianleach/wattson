@@ -29,8 +29,10 @@ jobs:
             echo "::error::Found 'Culver City' (location)"
             FOUND=1
           fi
-          # Email addresses (excluding example placeholders)
-          if grep -rE "[a-zA-Z0-9._%+-]+@(?!example\.com|example\.org)[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}" --include="*.py" --include="*.md" --include="*.yml" --include="*.yaml" . | grep -v ".git/"; then
+          # Email addresses (excluding example placeholders).
+          # Two stages: grep -E has no lookahead, so match every
+          # address first, then filter the placeholders out.
+            if grep -rE "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}" --include="*.py" --include="*.md" --include="*.yml" --include="*.yaml" . | grep -v ".git/" | grep -vE "@(example\.com|example\.org)"; then
             echo "::error::Found email address"
             FOUND=1
           fi

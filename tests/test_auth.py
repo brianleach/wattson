@@ -44,7 +44,7 @@ class AuthenticationTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with self.assertRaisesRegex(SystemExit, "Rivian rejected the login") as ctx:
-            await authenticate(client, "driver@example.test", secret)
+            await authenticate(client, "driver@example.com", secret)
 
         self.assertNotIn(secret, str(ctx.exception))
 
@@ -60,7 +60,7 @@ class AuthenticationTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with self.assertRaisesRegex(SystemExit, "Rivian rejected the OTP") as ctx:
-            await validate_otp(client, "driver@example.test", code)
+            await validate_otp(client, "driver@example.com", code)
 
         self.assertNotIn(code, str(ctx.exception))
 
@@ -81,7 +81,7 @@ class TokenPayloadTests(unittest.TestCase):
         }
 
         tokens = build_tokens(
-            "driver@example.test",
+            "driver@example.com",
             "synthetic-session-token",
             vehicle,
         )

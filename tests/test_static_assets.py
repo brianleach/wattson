@@ -54,9 +54,17 @@ class StaticAssetsTests(unittest.TestCase):
         self.assertNotIn('<script src="/dashboard.js">', html)
         self.assertNotIn(
             '<link rel="stylesheet" href="/dashboard.css">', html)
-        # The demo hides the Send destination button even with a
-        # password set.
-        self.assertNotIn('id="navopen"', html)
+        # The demo shows the Send destination button, flagged so
+        # the modal runs in demo mode (no server behind the page).
+        self.assertIn('id="navopen"', html)
+        self.assertIn("window.WATTSON_DEMO = true;", html)
+
+    def test_demo_nav_js_is_wired(self):
+        js = (Path(report.__file__).parent / "static"
+              / "dashboard.js").read_text(encoding="utf-8")
+        self.assertIn("window.WATTSON_DEMO", js)
+        self.assertIn("your saved places from the Rivian app", js)
+        self.assertIn("search finds places on OpenStreetMap", js)
 
     def test_nav_button_hidden_without_token(self):
         with mock.patch.dict(os.environ):

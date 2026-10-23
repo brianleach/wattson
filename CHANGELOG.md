@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- The public demo now shows the Send destination button. The
+  demo has no server behind it, so the modal opens with demo
+  notes where live places and search results would be, instead
+  of hiding the feature.
+
 
 ## [0.9.0] - 2026-10-22
 ### Added

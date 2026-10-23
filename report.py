@@ -1505,7 +1505,11 @@ def _scripts_markup() -> str:
     static/dashboard.js for the served dashboard; inlined by demo
     builds, like the CSS."""
     if os.environ.get("WATTSON_DEMO"):
-        return "<script>\n" + _asset_text("dashboard.js") + "</script>"
+        # The flag tells the nav modal to run in demo mode:
+        # no server behind the page, so places and search show
+        # explanatory notes instead of calling the API.
+        return ("<script>\nwindow.WATTSON_DEMO = true;\n"
+                + _asset_text("dashboard.js") + "</script>")
     return '<script src="/dashboard.js"></script>'
 
 
@@ -1960,8 +1964,12 @@ def generate() -> None:
         "__BOLT__": (_BOLT_SVG if live and soc is not None and soc >= 8
                      else ""),
         "__LOCATION__": location_html,
-        "__NAVBTN__": ("" if (os.environ.get("WATTSON_DEMO")
-                            or not token_from_env())
+        # The demo shows the button too: its modal explains
+        # itself (see the WATTSON_DEMO flag in _scripts_markup).
+        # A served dashboard without a password set hides it,
+        # because the nav endpoints are off there.
+        "__NAVBTN__": ("" if (not os.environ.get("WATTSON_DEMO")
+                            and not token_from_env())
                        else '<button type="button" id="navopen" '
                             'class="navbtn" onclick="openNavModal()">'
                             'Send destination</button>'),

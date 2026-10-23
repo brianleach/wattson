@@ -219,6 +219,7 @@ var _costChargeId=null;var _costStartTs=null;var _costOpener=null;function openC
 ;
 
 /* Send destination modal. */
+var _navDemo = !!window.WATTSON_DEMO;
 var _navCar = null, _navWhMi = 380, _navSaved = [], _navListArr = [], _navStale = false,
     _navPlace = null, _navSelIdx = null, _navMode = 'direct', _navRound = false,
     _navJob = null, _navTimer = null, _navTab = 'rec';
@@ -234,6 +235,12 @@ function openNavModal() {
   document.getElementById('navstatus').textContent = '';
   document.getElementById('navlist').innerHTML = '<p class="sub">Loading your places...</p>';
   navSetSend(false, 'Send');
+  if (_navDemo) {
+    _navCar = null; _navSaved = []; _navStale = false;
+    navShowBrowse();
+    document.getElementById('navq').focus();
+    return;
+  }
   fetch('/api/nav/state').then(function(r) { return r.json(); }).then(function(j) {
     if (j && j.ok === false && j.error) {
       document.getElementById('navlist').innerHTML = '<p class="sub">' + navEsc(j.error) + '</p>';
@@ -337,7 +344,9 @@ function navShowBrowse() {
   var html = '';
   _navListArr.forEach(function(p, i) { html += navRow(p, i); });
   document.getElementById('navlist').innerHTML = html ||
-    ('<p class="sub">' + (_navStale ?
+    ('<p class="sub">' + (_navDemo ?
+      'Demo: in a live install, your saved places from the Rivian app appear here.' :
+      _navStale ?
       'Your places could not load just now. Close and reopen to retry, search still works.' :
       (_navTab === 'fav' ? 'No favorites saved in Rivian.' : 'No recent places.')) + '</p>');
 }
@@ -351,6 +360,12 @@ document.getElementById('navq').addEventListener('keydown', function(e) {
 function navDoSearch() {
   var q = document.getElementById('navq').value.trim();
   if (!q) { navShowBrowse(); return; }
+  if (_navDemo) {
+    document.getElementById('navtabs').classList.add('hidden');
+    document.getElementById('navlist').innerHTML =
+      '<p class="sub">Demo: in a live install, search finds places on OpenStreetMap.</p>';
+    return;
+  }
   document.getElementById('navtabs').classList.add('hidden');
   if (q.indexOf('http') === 0 && (q.indexOf('maps') >= 0 || q.indexOf('telenav') >= 0 || q.indexOf('goo.gl') >= 0)) {
     _navListArr = [{name: 'Map link', address: q, url: q, lat: null, lon: null, place_id: null}];

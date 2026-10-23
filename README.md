@@ -56,9 +56,10 @@ promises. Take it, run it, break it, make it yours.
 ## Recent updates
 
 See [CHANGELOG.md](CHANGELOG.md) for the full release history. Latest:
-**Send destination**: the dashboard sends places to the car's
-navigation, with an energy pre-check, car-planned charging stops,
-and confirmation from the car's own route report (0.9.0).
+**Phantom drain display honesty**: the drain tile headlines the
+last park's total loss, and parks too small for the car's battery
+gauge to measure no longer get invented rates anywhere on the
+page (0.9.1).
 
 ## Quick start
 

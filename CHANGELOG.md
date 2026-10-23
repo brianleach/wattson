@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-10-23
+### Fixed
+- Phantom drain hero tile: now headlines the last completed park's
+  total battery loss, with the park's time window as the sublabel,
+  instead of a per-day rate that read as if it described one day.
+- Sub-step parks no longer get an invented rate anywhere. A park
+  whose battery drop fits inside one gauge step (0.1%) prints no
+  watts and no %/day: the chart draws a hollow stub, the table
+  reads "below one gauge step", and the long-range heat strip
+  renders the cell flat with the same note. The heat strip
+  previously still showed confident watts and kWh for these.
+- A park that ends one gauge step higher than it started (the
+  gauge recalibrating as the car wakes) displays 0.0% instead of
+  a negative drain, matching what the analyzer stores.
+- The drain breakdown table prints battery endpoints to one
+  decimal, so the battery column agrees with the loss column on
+  the same row, and each row notes how many car reports the
+  period rests on. The chart footnote now explains the
+  report-to-report measurement.
+- The drain chart's median label moved into the axis gutter,
+  clear of the bars, and no longer clips at the chart's edge.
+  Stub labels survive the dense long-range charts.
+- A measured park with a missing battery reading can no longer
+  crash the dashboard render; the hero falls back to the latest
+  park that has a reading.
+
 ## [0.9.0] - 2026-10-22
 ### Added
 - Send destination: a hero action sends a place to the car's

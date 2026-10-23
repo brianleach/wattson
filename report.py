@@ -1844,8 +1844,7 @@ def generate() -> None:
             '<a class="stat" href="#battery"><div class="k">Phantom drain</div>'
             f'<div class="v amber">{tilde}{ov["soc_drop"]:.1f}'
             '<small> %</small></div>'
-            f'<div class="s">last park &middot; {tilde}{ov["pct_day"]:.1f}'
-            f'%&hairsp;/day avg &middot; {_esc(ov["window"])}</div></a>')
+            f'<div class="s">{_esc(ov["window"])}</div></a>')
     elif idles or open_park:
         idle_stat = (
             '<a class="stat" href="#battery"><div class="k">Phantom drain</div>'

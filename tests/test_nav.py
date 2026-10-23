@@ -422,7 +422,7 @@ class ConfirmerTests(unittest.TestCase):
                           chargers=[{"name": "C", "minutes": 10}])
         c = nav._Confirmer(base, "moon house")
         jittered = self.route(
-            "Moon House", lat=34.00001,
+            "Moon House", lat=34.0 + 1e-5,
             chargers=[{"name": "C", "minutes": 22}])
         self.assertFalse(c.check(jittered))
 

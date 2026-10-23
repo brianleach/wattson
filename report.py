@@ -158,7 +158,8 @@ def _bars(items: list[tuple[str, float, str]], fmt: str = ".2f",
           thin: bool = False,
           y_unit: str | None = None,
           ref_value: float | None = None,
-          ref_label: str = "median") -> str:
+          ref_label: str = "median",
+          stubs: set[int] | None = None) -> str:
     """items: (label, value, color). Simple rounded vertical bars.
     fmt controls the value label formatting (".2f" for kWh, ".0f" for mi);
     labels overrides the value text per bar (raw HTML, e.g. "&lt;0.1").
@@ -169,7 +170,11 @@ def _bars(items: list[tuple[str, float, str]], fmt: str = ".2f",
     round ticks and a true zero baseline, so bar heights read as absolute
     values instead of fractions of the tallest visible bar.
     ref_value/ref_label: dashed reference line, e.g. the median that the
-    abnormal-night rule is measured against."""
+    abnormal-night rule is measured against. The label sits in the axis
+    gutter at the line's height (never over the bars, whose value labels
+    live at the same height at the plot's right end).
+    stubs: bar indexes drawn as short hollow outlines instead of filled
+    bars, for periods that exist but are below the measurement floor."""
     if not items:
         return ""
     raw_max = max(v for _, v, _ in items)
@@ -210,15 +215,24 @@ def _bars(items: list[tuple[str, float, str]], fmt: str = ".2f",
                 f'<line x1="{x0}" y1="{ry:.1f}" x2="{x1}" y2="{ry:.1f}"'
                 f' stroke="#98989f" stroke-width="1"'
                 f' stroke-dasharray="5 4"/>')
+            # Label in the axis gutter at the line's height; nudged
+            # below the line when a tick label already sits there.
+            ly = ry - 2
+            if any(abs(ly - (Y(t) + 4)) < 12 for t in ticks):
+                ly = ry + 15
             parts.append(
-                f'<text x="{x1}" y="{ry - 6:.1f}" text-anchor="end"'
+                f'<text x="{x0 - 4}" y="{ly:.1f}" text-anchor="end"'
                 f' class="axis">{_esc(ref_label)}</text>')
     rects = []
     for i, (label, val, color) in enumerate(items):
         frac = val / top
         # With a real axis a zero night draws no bar (honest); without an
         # axis keep the old 4px minimum so tiny values stay visible.
-        bh = frac * plot_h if axis else max(4.0, frac * plot_h)
+        # Stub bars override the height: a short hollow outline marks a
+        # period that exists but is below the measurement floor.
+        stub = bool(stubs) and i in stubs
+        bh = 9.0 if stub else (
+            frac * plot_h if axis else max(4.0, frac * plot_h))
         x = x0 + gap * i + (gap - bw) / 2
         y = base_y - bh
         if thin and color != RED:
@@ -235,10 +249,16 @@ def _bars(items: list[tuple[str, float, str]], fmt: str = ".2f",
                 f' class="bar-val">{vlab}</text>'
                 f'<text x="{x + bw / 2:.1f}" y="{y - 10:.1f}" text-anchor="middle"'
                 f' class="bar-sub">{slab}</text>')
+        if stub:
+            rect = (f'<rect x="{x:.1f}" y="{y:.1f}" width="{bw:.1f}" '
+                    f'height="{bh:.1f}" rx="4" fill="none" '
+                    f'stroke="{color}" stroke-width="1.5"/>')
+        else:
+            rect = (f'<rect x="{x:.1f}" y="{y:.1f}" width="{bw:.1f}" '
+                    f'height="{bh:.1f}" rx="7" fill="{color}"/>')
         rects.append(
-            f'<rect x="{x:.1f}" y="{y:.1f}" width="{bw:.1f}" height="{bh:.1f}"'
-            f' rx="7" fill="{color}"/>'
-            f'<text x="{x + bw / 2:.1f}" y="{h - 6}" text-anchor="middle"'
+            rect
+            + f'<text x="{x + bw / 2:.1f}" y="{h - 6}" text-anchor="middle"'
             f' class="bar-label">{xlab}</text>' + vtxt)
     return (f'<svg viewBox="0 0 {w} {h}" class="bars" role="img">'
             + "".join(parts) + "".join(rects) + "</svg>")
@@ -1346,7 +1366,8 @@ def _idle_table(periods: list[dict], bad: set) -> str:
     cloud-sync anchors (see _idle_history); plugged-in periods show no
     rate because the car can top itself off. The * marker uses the same
     1.6x-median baseline as the chart's red bars. A ~ marks periods
-    whose battery drop is at the edge of what the gauge can resolve.
+    whose battery drop is close to what the gauge can resolve; periods
+    at or under one gauge step (0.1%) print no rate at all.
     """
     if not periods:
         return '<p class="dim">No idle periods measured yet.</p>'
@@ -1356,21 +1377,28 @@ def _idle_table(periods: list[dict], bad: set) -> str:
         label = o["label"] + warn
         if o["plugged"]:
             label += ' <span class="dim">(plugged in)</span>'
-        batt = (f"{o['soc_start']:.0f}% &rarr; {o['soc_end']:.0f}%"
+        batt = (f"{o['soc_start']:.1f}% &rarr; {o['soc_end']:.1f}%"
                 if o["soc_start"] is not None and o["soc_end"] is not None
                 else "-")
         if o["measured"]:
             tilde = "~" if o["approx"] else ""
             lost = f"{o['kwh']:.2f} kWh &bull; {o['soc_drop']:.1f}%"
-            watts_txt = f"{tilde}{o['watts']:.0f} W"
-            pct_txt = f"{tilde}{o['pct_day']:.1f}%"
+            if o.get("substep"):
+                watts_txt = "below one gauge step"
+                pct_txt = "-"
+            else:
+                watts_txt = f"{tilde}{o['watts']:.0f} W"
+                pct_txt = f"{tilde}{o['pct_day']:.1f}%"
         elif o["plugged"]:
             lost = watts_txt = pct_txt = "-"
         else:
             lost = watts_txt = pct_txt = "no data"
+        dur = f"{o['hours']:.1f} h"
+        if o.get("reports"):
+            dur += f" &middot; {o['reports']} reports"
         rows.append(
             f"<tr><td>{label}</td>"
-            f"<td>{o['hours']:.1f} h</td>"
+            f"<td>{dur}</td>"
             f"<td>{batt}</td>"
             f"<td>{lost}</td>"
             f"<td>{watts_txt}</td>"
@@ -1397,6 +1425,9 @@ def _idle_history(drains: list[dict], snapshots) -> tuple[list[dict], dict | Non
     """
     out = []
     open_park = None
+    from bisect import bisect_left, bisect_right
+    all_syncs = sorted({s["cloud_sync_ts"] for s in snapshots
+                        if s.get("cloud_sync_ts")})
     for d in drains:
         if d.get("open_span"):
             open_park = {"since_ts": d["sleep_ts"], "soc": d.get("soc_start")}
@@ -1412,6 +1443,16 @@ def _idle_history(drains: list[dict], snapshots) -> tuple[list[dict], dict | Non
         else:
             label = f"{d1.strftime('%b %d')}-{d2.strftime('%d')}"
         s0, s1 = d.get("soc_start"), d.get("soc_end")
+        # A span whose whole drop fits inside one battery-gauge step
+        # (0.1%) cannot support a rate: present, but unmeasurable.
+        substep = bool(measured and s0 is not None and s1 is not None
+                       and (s0 - s1) <= 0.100001)
+        # Fresh car reports (distinct cloud syncs) between the anchors:
+        # how many readings the span's number actually rests on.
+        reports = None
+        if measured and a1 and a2 and all_syncs:
+            n = bisect_right(all_syncs, a2) - bisect_left(all_syncs, a1)
+            reports = n or None
         out.append({
             "id": t1,  # unique key for abnormal-period flagging
             "day": d2.strftime("%Y-%m-%d"),  # for heat-strip positioning
@@ -1426,6 +1467,8 @@ def _idle_history(drains: list[dict], snapshots) -> tuple[list[dict], dict | Non
             "measured": measured,
             "plugged": plugged,
             "approx": bool(d.get("approx")),
+            "substep": substep,
+            "reports": reports,
             "no_data": not measured,
             "window": f"{_fmt_ts(w1)} \u2192 {_fmt_ts(w2)}",
             "t1": t1, "t2": t2,
@@ -1547,7 +1590,7 @@ def generate() -> None:
             "SELECT * FROM snapshots ORDER BY ts DESC LIMIT 1").fetchone()
         snapshots = [dict(r) for r in con.execute(
             "SELECT ts, soc, capacity_kwh, range_mi, cloud_online, charger_state"
-            " FROM snapshots ORDER BY ts")]
+            ", cloud_sync_ts FROM snapshots ORDER BY ts")]
         trips = [dict(r) for r in con.execute(
             "SELECT * FROM trips ORDER BY start_ts DESC LIMIT 60")]
         errands = [dict(r) for r in con.execute(
@@ -1799,18 +1842,19 @@ def generate() -> None:
         tilde = "~" if ov["approx"] else ""
         idle_stat = (
             '<a class="stat" href="#battery"><div class="k">Phantom drain</div>'
-            f'<div class="v amber">{tilde}{ov["pct_day"]:.1f}'
-            '<small> %/day</small></div>'
-            f'<div class="s">{_esc(ov["window"])}</div></a>')
+            f'<div class="v amber">{tilde}{ov["soc_drop"]:.1f}'
+            '<small> %</small></div>'
+            f'<div class="s">last park &middot; {tilde}{ov["pct_day"]:.1f}'
+            f'%&hairsp;/day avg &middot; {_esc(ov["window"])}</div></a>')
     elif idles or open_park:
         idle_stat = (
             '<a class="stat" href="#battery"><div class="k">Phantom drain</div>'
-            '<div class="v amber">-<small> %/day</small></div>'
+            '<div class="v amber">-<small> %</small></div>'
             '<div class="s">no measured period yet</div></a>')
     else:
         idle_stat = (
             '<a class="stat" href="#battery"><div class="k">Phantom drain</div>'
-            '<div class="v amber">-<small> %/day</small></div>'
+            '<div class="v amber">-<small> %</small></div>'
             '<div class="s">no data yet</div></a>')
 
     # Phantom drain trend: period-by-period bars, so "typical" has a visual
@@ -1832,7 +1876,8 @@ def generate() -> None:
         wvals = sorted(o["watts"] for o in measured)
         med = wvals[len(wvals) // 2] if wvals else 0
         bad = {o["id"] for o in measured
-               if len(measured) >= 3 and med > 0 and o["watts"] > 1.6 * med}
+               if len(measured) >= 3 and med > 0 and o["watts"] > 1.6 * med
+               and not o.get("substep")}
         n_plugged = sum(1 for o in periods if o["plugged"])
         n_nodata = len(periods) - len(measured) - n_plugged
         tot_drop = sum(o["soc_drop"] or 0 for o in measured)
@@ -1852,7 +1897,8 @@ def generate() -> None:
         cols = [RED if o["id"] in bad else AMBER for o in periods]
         thin = len(periods) > 16
         labels = [("plugged in" if o["plugged"] else
-                   "no data" if o["no_data"] else f"{o['watts']:.0f} W")
+                   "no data" if o["no_data"] else
+                   "&le;0.1%" if o.get("substep") else f"{o['watts']:.0f} W")
                   for o in periods]
         sublabels = ["" if o["no_data"] else f"{o['hours']:.0f}h"
                      for o in periods]
@@ -1862,7 +1908,9 @@ def generate() -> None:
             bars = _bars(
                 [(o["label"], o["watts"], c) for o, c in zip(periods, cols)],
                 labels=labels, sublabels=sublabels, thin=thin,
-                y_unit="W", ref_value=med if med > 0 else None)
+                y_unit="W", ref_value=med if med > 0 else None,
+                stubs={i for i, o in enumerate(periods)
+                       if o.get("substep")})
             chart = bars
         table = _idle_table(periods, bad)
         details = (
@@ -1900,8 +1948,12 @@ def generate() -> None:
     if trend_ranges:
         trend_note = ("Each bar is one park between drives, measured from "
                       "the car's last report after parking to its first "
-                      "report on waking. Plugged-in periods are not "
-                      "measured: the car tops itself off.")
+                      "report on waking. The car only reports when it "
+                      "wakes or checks in, so a long park may rest on just "
+                      "a few readings, and a short park can read zero: "
+                      "the battery gauge moves in 0.1% steps, about 88 Wh "
+                      "each. Plugged-in periods are not measured: the "
+                      "car tops itself off.")
     else:
         trend_note = ""
     if open_park:

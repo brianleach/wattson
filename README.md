@@ -24,6 +24,21 @@ promises. Take it, run it, break it, make it yours.
 
 ## What it does
 
+> **New in 0.9.0: Send destination.** Send a place to the car's
+> navigation straight from the dashboard, no Rivian app needed.
+> Search OpenStreetMap by name or address, pick from your saved
+> and recent places, or paste a Google Maps link. An energy
+> pre-check at your real efficiency warns when arrival charge
+> looks tight, and for longer trips the car's own planner
+> previews the route and the charging stops it would add before
+> anything is sent. A send only counts as confirmed when the
+> car reports the route back itself. It all rides your existing
+> signed-in session: no paired key, no Bluetooth.
+
+- **Send destination**, send an address, a saved place, or a pasted map
+  link to the car's navigation from the dashboard, with an energy check
+  at your real efficiency and confirmation from the car's own route report.
+  Requires a dashboard password (WATTSON_DASHBOARD_TOKEN) to be set
 - **Per-trip efficiency**, every drive with mi/kWh, energy used, drive mode,
   and a route map
 - **Charging log**, sessions with kWh added, your real home electricity cost,
@@ -35,19 +50,15 @@ promises. Take it, run it, break it, make it yours.
 - **Fuel savings vs gas**, per-session and lifetime savings against a gas
   SUV, priced at each charge day's AAA gas price, with transparent assumptions
 - **Drive history**, the record Rivian never kept
-- **Send destination**, send an address, a saved place, or a pasted map
-  link to the car's navigation from the dashboard, with an energy check
-  at your real efficiency and confirmation from the car's own route report.
-  Requires a dashboard password (WATTSON_DASHBOARD_TOKEN) to be set
 - **Optional dashboard login**, password-protect your dashboard when exposing
   it through a tunnel
 
 ## Recent updates
 
 See [CHANGELOG.md](CHANGELOG.md) for the full release history. Latest:
-**Phantom drain anchor fix**: a park's closing reading now uses the
-first report under the car's wake sync, so driving that follows a
-wake can no longer be booked as parked drain (0.8.1).
+**Send destination**: the dashboard sends places to the car's
+navigation, with an energy pre-check, car-planned charging stops,
+and confirmation from the car's own route report (0.9.0).
 
 ## Quick start
 

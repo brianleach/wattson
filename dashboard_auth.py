@@ -32,8 +32,12 @@ def _equal(a, b):
 
 
 def _sign(token, expires_ms):
-    # The token doubles as the HMAC key, so rotating it logs everyone out.
-    return hmac.new(token.encode(), str(expires_ms).encode(),
+    # Sign with a key derived from the token under a domain
+    # separator, never the raw token itself. Rotating the token
+    # still logs everyone out.
+    key = hashlib.sha256(
+        b"wattson dashboard session v1\0" + token.encode()).digest()
+    return hmac.new(key, str(expires_ms).encode(),
                     hashlib.sha256).hexdigest()
 
 

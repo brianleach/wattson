@@ -1,4 +1,9 @@
-"""Generate a self-contained HTML dashboard from the tracker database.
+"""Generate the HTML dashboard from the tracker database.
+
+The page's CSS and JavaScript live in static/dashboard.css
+and static/dashboard.js, linked by the generated page. Demo
+builds (WATTSON_DEMO set) inline both files instead, so
+the demo stays a single self-contained page.
 
 Visual language mimics the Rivian app: near-black background, huge display
 type, big rounded cards, green/amber accents, donut charts. No emoji, no
@@ -33,6 +38,7 @@ from config import (HOME_LAT, HOME_LON,
                     REPORT_PATH, TOKENS_PATH, LOCAL_TZ)
 from crypto import unseal
 from db import connect
+from dashboard_auth import token_from_env
 
 GREEN = "#7ed321"
 AMBER = "#f5a623"
@@ -399,16 +405,12 @@ def _pack_svg(series: list[tuple[str, float, float]],
         for i, (lbl, _, _) in enumerate(series)
         if i % lstep == 0 or i == n - 1)
     legend = (
-        f'<div style="display:flex;flex-wrap:wrap;gap:6px 18px;'
-        f'margin:2px 0 8px;font-size:13px;'
-        f'color:var(--dim)">'
-        f'<span><span style="display:inline-block;width:10px;height:10px;'
-        f'border-radius:5px;background:{GREEN};margin-right:6px"></span>'
+        f'<div class="legend-row">'
+        f'<span><span class="swatch dot-g"></span>'
         f'Pack capacity</span>'
-        f'<span><span style="display:inline-block;width:10px;height:10px;'
-        f'border-radius:5px;background:{AMBER};margin-right:6px"></span>'
+        f'<span><span class="swatch dot-a"></span>'
         f'Implied full range</span>'
-        + (f'<span style="color:var(--faint)">{_esc(baseline_label)}</span>'
+        + (f'<span class="faint">{_esc(baseline_label)}</span>'
            if baseline_label else "")
         + '</div>')
     return (legend +
@@ -424,189 +426,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>__TITLE__</title>
 __FAVICON__
-<style>
-:root{
-  --bg:#0f0f11; --card:#1c1c1e; --card2:#242426; --track:#2b2b2e;
-  --text:#f5f5f7; --dim:#a1a1a6; --faint:#6e6e73;
-  --green:#7ed321; --amber:#f5a623; --red:#ff5a52; --radius:24px;
-}
-*{box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",Helvetica,Arial,
-  sans-serif;margin:0;padding:0 16px 48px;background:var(--bg);color:var(--text);
-  -webkit-font-smoothing:antialiased}
-.wrap{max-width:720px;margin:0 auto}
-.sitenav{position:fixed;top:12px;left:50%;transform:translateX(-50%);width:min(720px,calc(100% - 24px));z-index:50;background:rgba(17,19,23,.88);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,.14);border-radius:18px;box-shadow:0 12px 40px rgba(0,0,0,.35),0 0 28px rgba(255,255,255,.10),inset 0 1px 0 rgba(255,255,255,.08)}.nav-inner{padding:0 20px;height:56px;display:flex;align-items:center;justify-content:space-between;gap:16px}.nav-brand{font-weight:700;font-size:17px;letter-spacing:.06em;color:var(--text);text-decoration:none;white-space:nowrap}.nav-links{display:flex;gap:22px}.nav-links a{color:var(--dim);text-decoration:none;font-size:14px;font-weight:500;white-space:nowrap;padding:4px 0 2px;border-bottom:2px solid transparent;transition:color .2s,border-color .2s}.nav-links a:hover{color:var(--text)}.nav-links a.active{color:#ff9f0a;border-bottom-color:#ff9f0a}.nav-updated{font-size:12px;color:var(--faint);white-space:nowrap;display:flex;align-items:center;gap:8px}@media(max-width:640px){.nav-links{display:none}}body{padding-top:80px}#daily,#battery,#charging,#savings,#top{scroll-margin-top:92px}.demo-pill{font-size:11px;font-weight:600;color:#b45309;background:rgba(180,83,9,.15);border:1px solid rgba(180,83,9,.4);padding:2px 8px;border-radius:20px;white-space:nowrap}.topbar{display:flex;justify-content:space-between;align-items:center;
-  padding:20px 4px 8px}
-.pill{background:var(--card2);border-radius:999px;padding:10px 18px;
-  font-weight:700;font-size:15px}
-.updated{color:var(--faint);font-size:13px}
-@media(max-width:640px){
-  .nav-inner{height:auto;flex-wrap:wrap;padding:8px 16px 0;gap:4px 12px}
-  .nav-updated{margin-left:auto}
-  .nav-links{display:flex;order:3;flex:0 0 100%;overflow-x:auto}
-  .nav-links a{display:inline-flex;align-items:center;flex:none;min-height:44px}
-  body{padding-top:112px}
-  #daily,#battery,#charging,#savings,#top{scroll-margin-top:120px}
-}
-#poll-age{display:block;text-align:right}
-
-.hero{padding:28px 4px 8px}
-.hero-top{display:flex;justify-content:space-between;gap:10px;align-items:center}
-.hero-num{min-width:0;flex:1 1 auto}
-.hero-range{font-size:clamp(60px,17vw,120px);font-weight:650;
-  letter-spacing:-3px;line-height:1;margin:0;white-space:nowrap}
-.hero-side{width:38%;max-width:300px;min-width:130px;flex:0 0 auto;
-  display:flex;flex-direction:column;align-items:center}
-.hero-car{width:100%;height:auto}
-.hero-odo{margin-top:10px;font-size:20px;font-weight:700;color:var(--text);
-  text-align:center}
-.hero-sub{display:flex;gap:10px;align-items:baseline;justify-content:center;
-  margin-top:10px;color:var(--dim);font-size:17px}
-.hero-sub b{color:var(--text);font-size:20px}
-.battbar{height:26px;border-radius:999px;background:var(--track);
-  margin:18px 0 10px;overflow:hidden}
-.battbar>div{height:100%;border-radius:999px;background:var(--green);
-  position:relative}
-.battbar.charging .bolt{position:absolute;right:7px;top:50%;
-  transform:translateY(-50%);width:18px;height:20px;fill:#ffffff;
-  animation:boltfade 4s ease-in-out infinite}
-@keyframes boltfade{0%,100%{opacity:0}
-  50%{opacity:1}}
-.heroloc{margin-top:14px;font-size:16px;color:var(--dim)}
-.heroloc b{color:var(--text)}
-.tire4{display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;margin-top:2px}
-.tire4 .tc{font-size:21px;font-weight:650;color:var(--text)}
-.tire4 .tc i{font-style:normal;color:var(--dim);font-size:13px;margin-right:7px}
-.tire4 .tc.warnv,.tire4 .tc.warnv i,.tire4 .tc.warnv b{color:var(--amber)}
-.tire4 .tc.lowv,.tire4 .tc.lowv i,.tire4 .tc.lowv b{color:var(--red)}
-h2.sec{font-size:32px;font-weight:750;letter-spacing:-0.8px;margin:38px 0 14px}
-.card{background:var(--card);border-radius:var(--radius);padding:22px;
-  margin-bottom:14px}
-.card h3{margin:0 0 2px;font-size:21px;font-weight:700;letter-spacing:-0.3px}
-.card h3.row{display:flex;justify-content:space-between;align-items:center;
-  gap:10px}
-.card .sub{color:var(--dim);font-size:14px;margin-bottom:14px}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:18px}
-.grid4{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:18px}
-.grid4 .stat{min-height:172px}
-.chlive{display:flex;gap:18px;align-items:center;margin-top:6px}
-.chlive-main{flex:1 1 0;min-width:0}
-.chlive-side{flex:0 0 172px;display:flex;flex-direction:column;gap:12px}
-.chlive-side .stat{padding:14px 16px}
-@media (max-width:620px){
-  .chlive{flex-direction:column;align-items:stretch}
-  .chlive-side{flex:1 1 auto;display:grid;grid-template-columns:1fr 1fr;gap:14px}
-}
-.stat{background:var(--card);border-radius:var(--radius);padding:20px}a.stat{color:inherit;text-decoration:none;transition:background .2s,transform .2s;cursor:pointer}a.stat:hover{background:rgba(255,255,255,.07);transform:translateY(-1px)}
-.stat .k{font-size:13px;color:var(--dim);margin-bottom:8px}
-.stat .v{font-size:38px;font-weight:700;letter-spacing:-1px;line-height:1.05}
-.stat .v small{font-size:18px;font-weight:600;color:var(--dim)}
-.stat .s{font-size:13px;color:var(--dim);margin-top:8px}
-.drain-k{display:flex;justify-content:space-between;align-items:center;gap:8px}
-.useg{display:inline-flex;background:var(--card2);border-radius:999px;padding:2px;gap:2px;flex:none}
-.useg button{border:0;background:transparent;color:var(--dim);font-size:11px;
-  font-weight:700;padding:4px 10px;border-radius:999px;cursor:pointer}
-.useg button.on{background:#f5f5f7;color:#0f0f11}
-.amber{color:var(--amber)} .green{color:var(--green)} .dim{color:var(--dim)}
-.donut{width:100%;max-width:300px;display:block;margin:6px auto}
-.donut-big{fill:var(--text);font-size:44px;font-weight:700}
-.donut-small{fill:var(--dim);font-size:19px}
-.donut-tiny{fill:var(--dim);font-size:15px}
-.donut-cap{text-align:center;color:var(--dim);font-size:14px;margin-top:6px}
-.bars{width:100%;display:block}
-.heat{width:100%;display:block}
-.bar-label{fill:var(--faint);font-size:12px}
-.bar-val{fill:var(--dim);font-size:12px;font-weight:600}
-.bar-sub{fill:var(--faint);font-size:11px}
-.linechart{width:100%;display:block}
-.grid{stroke:#2b2b2e;stroke-width:1}
-.axis{fill:var(--faint);font-size:12px}
-.seg{display:flex;gap:8px;margin:12px 0 14px}
-.seg button{flex:1;border:0;border-radius:14px;padding:11px 0;font-size:15px;
-  font-weight:700;background:var(--card2);color:var(--dim);cursor:pointer}
-.seg button.on{background:#f5f5f7;color:#0f0f11}
-.sec-row{display:flex;justify-content:space-between;align-items:center;
-  margin:38px 0 14px}
-.sec-row h2.sec{margin:0}
-.monthsel{background:var(--card2);color:var(--dim);border:0;border-radius:12px;
-  padding:10px 12px;font-size:14px;font-weight:600;cursor:pointer;
-  max-width:45%}
-.showmore{display:block;width:100%;border:0;border-radius:14px;padding:13px 0;
-  font-size:15px;font-weight:700;background:var(--card2);color:var(--dim);
-  cursor:pointer;margin:4px 0 0}
-.showmore[hidden]{display:none}
-details.aday{background:var(--card);border-radius:var(--radius);
-  margin-bottom:12px;padding:6px 20px}
-details.aday summary{cursor:pointer;list-style:none;padding:14px 0;
-  font-size:16px;font-weight:700}
-details.aday summary::-webkit-details-marker{display:none}
-details.aday summary .dim{font-weight:400;font-size:14px}
-.abody{overflow:hidden}
-.asum{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
-.abar{position:relative;height:12px;border-radius:999px;background:var(--track);
-  margin-top:10px;overflow:hidden}
-.aseg{position:absolute;top:0;bottom:0}
-.anow{position:absolute;top:0;bottom:0;width:2px;background:#f5f5f7;opacity:.85}
-.alegend{display:flex;gap:14px;flex-wrap:wrap;margin:0 0 12px;color:var(--dim);
-  font-size:13px}
-.alegend i{display:inline-block;width:10px;height:10px;border-radius:3px;
-  margin-right:6px}
-.st-moving{background:#ff9f0a}.st-charging{background:#bf5af2}
-.st-parked{background:#30d158}.st-sleep{background:#2b2b2d}
-.st-unknown{background:repeating-linear-gradient(45deg,#48484a 0 4px,#333336 4px 8px)}
-.trip{border-top:1px solid #2c2c2e;padding:14px 0}
-.trip:first-of-type{margin-top:6px}
-.trip-time{font-size:15px;font-weight:700}
-.trip-time .dim{font-weight:400}
-.trip-route{font-size:15px;margin-top:3px}
-.tag{display:inline-block;font-size:12px;font-weight:600;color:var(--amber);
-  border:1px solid #4a3a1c;border-radius:999px;padding:2px 9px;margin-left:8px;
-  vertical-align:1px}
-.trip-stats{display:flex;gap:16px;margin-top:8px;color:var(--dim);font-size:14px}
-.trip-stats b{color:var(--text);font-weight:700}
-.cost-action{display:inline-flex;align-items:center;justify-content:center;
-  min-width:44px;min-height:44px;padding:6px 8px}
-details.chargerow{border-top:1px solid #2c2c2e}
-details.chargerow:first-of-type{margin-top:6px}
-details.chargerow summary{cursor:pointer;list-style:none;padding:12px 0 2px}
-details.chargerow summary::-webkit-details-marker{display:none}
-.chargedetail{overflow:hidden}
-.cdin{padding:10px 0 16px}
-.chargemap{border-radius:var(--radius);overflow:hidden;margin:10px 0 2px}
-.chargemap img{width:100%;height:auto;display:block;opacity:0;transition:opacity .45s ease}.chargemap img.ld{opacity:1}
-.trip-via{color:var(--faint);font-size:13px;margin-top:2px}
-#tripmap{height:300px;border-radius:var(--radius);margin-top:4px;
-  background:#141416}
-.mapwrap{position:relative;border-radius:var(--radius);overflow:hidden;
-  background:#0b0d10;margin-top:4px}
-.mapwrap svg{position:absolute;inset:0;width:100%;height:100%}
-.mapwrap img{opacity:0;transition:opacity .45s ease}
-.mapwrap img.ld{opacity:1}
-.mapattr{position:absolute;right:8px;bottom:6px;font-size:10px;color:#8a8f98;
-  background:rgba(10,12,15,.72);padding:2px 6px;border-radius:4px}
-.empty{background:var(--card);border-radius:var(--radius);padding:34px 22px;
-  color:var(--dim);font-size:15px;text-align:center;line-height:1.6}
-table.drain,table.ctab{width:100%;border-collapse:collapse;font-size:14px;margin-top:6px}
-table.drain th,table.ctab th{text-align:left;color:var(--faint);font-weight:600;
-  font-size:12px;text-transform:uppercase;letter-spacing:0.6px;
-  padding:10px 8px;border-bottom:1px solid #2c2c2e}
-table.drain td,table.ctab td{padding:11px 8px;border-bottom:1px solid #232326}
-table.drain tr:last-child td,table.ctab tr:last-child td{border-bottom:0}
-
-.warn{color:var(--red);font-weight:700}
-.foot{margin-top:34px;color:var(--faint);font-size:13px;line-height:1.7}
-.foot p{margin:8px 0}
-.note{font-size:13px;color:var(--faint);margin-top:10px;line-height:1.6}
-#toTop{position:fixed;right:20px;bottom:calc(20px + env(safe-area-inset-bottom));z-index:50;width:46px;height:46px;border-radius:50%;border:1px solid var(--track);background:var(--card2);color:var(--text);cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0;visibility:hidden;transform:translateY(10px);transition:opacity .25s ease,transform .25s ease,visibility .25s}
-#toTop.show{opacity:1;visibility:visible;transform:translateY(0)}
-#toTop.show:active{transform:scale(.93)}
-#toTop svg{width:22px;height:22px}
-.wrap:focus{outline:none}
-@media (prefers-reduced-motion: reduce){
-  #toTop,#toTop.show{transition:none;transform:none}
-  .battbar.charging .bolt{animation:none;opacity:1}
-}
-</style></head>
+__STYLES__</head>
 <body>
 <nav class="sitenav"><div class="nav-inner">
   <a class="nav-brand" href="#top">__BRAND__</a>
@@ -631,8 +451,8 @@ table.drain tr:last-child td,table.ctab tr:last-child td{border-bottom:0}
       <div class="hero-odo">__ODO__</div>
     </div>
   </div>
-  <div class="battbar__BATTCHG__"><div style="width:__SOCPCT__%">__BOLT__</div></div>
-<div class="heroloc" style="display:flex;align-items:center;justify-content:space-between;gap:12px"><span style="flex:1 1 auto;min-width:0">__LOCATION__</span>__NAVBTN__</div>
+  <div class="battbar__BATTCHG__"><div style="--p:__SOCPCT__%">__BOLT__</div></div>
+<div class="heroloc row-between"><span class="flex1">__LOCATION__</span>__NAVBTN__</div>
   <div class="grid4">
     <a class="stat" href="#savings"><div class="k">Lifetime savings vs gas</div>
       <div class="v green">__GASSAVE__</div>
@@ -682,531 +502,51 @@ bracket, between polls.</p>
 </div>
 </div>
 <button id="toTop" aria-label="Back to top"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-<script>
-__SCRIPT__
-</script><script>var scrollRaf=null;(function(){var ease=function(t){return t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2};document.querySelectorAll('a[href^="#"]').forEach(function(a){a.addEventListener('click',function(e){var el=document.querySelector(a.getAttribute('href'));if(!el)return;e.preventDefault();var y=el.getBoundingClientRect().top+window.scrollY-document.querySelector('.sitenav').getBoundingClientRect().bottom-12;cancelAnimationFrame(scrollRaf);var s=window.scrollY,d=y-s,dur=900,t0=performance.now();(function step(t){var p=Math.min((t-t0)/dur,1);window.scrollTo(0,s+d*ease(p));if(p<1)scrollRaf=requestAnimationFrame(step);})(t0);});});})();</script><script>(function(){var links={};document.querySelectorAll('.nav-links a[href^="#"]').forEach(function(a){links[a.getAttribute('href').slice(1)]=a});var ids=Object.keys(links);var secs=ids.map(function(id){return document.getElementById(id)}).filter(Boolean).sort(function(a,b){return a.getBoundingClientRect().top-b.getBoundingClientRect().top});if(!secs.length)return;var cur='',locked=null,lockTimer=null;function setActive(id){if(id===cur)return;cur=id;ids.forEach(function(k){links[k].classList.toggle('active',k===id)})}function update(){if(locked){setActive(locked);return}var line=120,id='';secs.forEach(function(s){if(s.getBoundingClientRect().top<=line){id=s.id}});var lastSec=secs[secs.length-1];var distToBottom=document.documentElement.scrollHeight-(window.innerHeight+window.scrollY);if(lastSec&&distToBottom<=300&&lastSec.getBoundingClientRect().top<window.innerHeight){id=lastSec.id}setActive(id)}document.querySelectorAll('.nav-links a[href^="#"]').forEach(function(a){a.addEventListener('click',function(){locked=a.getAttribute('href').slice(1);setActive(locked);clearTimeout(lockTimer);lockTimer=setTimeout(function(){locked=null;update()},1000)})});var ticking=false;window.addEventListener('scroll',function(){if(ticking)return;ticking=true;requestAnimationFrame(function(){ticking=false;update()})},{passive:true});update();})();</script><form id="costform" method="POST" action="/api/charge-cost-form" style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0"><input type="hidden" name="charge_id" id="form_charge_id"><input type="hidden" name="cost_per_kwh" id="form_cost_per_kwh"><input type="hidden" name="start_ts" id="form_start_ts"></form><div id="costmodal" style="display:none;position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.7);align-items:center;justify-content:center"><div style="background:#1a1d21;border:1px solid #333;border-radius:16px;padding:24px;max-width:320px;width:90%"><h3 style="margin:0 0 12px">DC charging cost</h3><p class="sub" style="margin:0 0 12px">Enter what you paid per kWh:</p><form onsubmit="saveCost();return false;" style="margin:0"><input id="costinput" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.48" style="width:100%;padding:10px;font-size:16px;border-radius:8px;border:1px solid #444;background:#0b0d10;color:#fff;box-sizing:border-box"><div style="display:flex;gap:10px;margin-top:16px"><button type="submit" style="flex:1;padding:10px;border-radius:8px;border:none;background:#7ed321;color:#000;font-weight:600;cursor:pointer">Save</button><button type="button" onclick="closeCostModal()" style="flex:1;padding:10px;border-radius:8px;border:1px solid #444;background:transparent;color:#fff;cursor:pointer">Cancel</button></div><div style="margin-top:12px;text-align:center"><a class="cost-action" href="#" onclick="clearCost();return false;" style="color:#888;font-size:12px">clear entered cost</a></div></form></div></div><script>var _costChargeId=null;var _costStartTs=null;function openCostModal(chargeId,currentVal,startTs){_costChargeId=chargeId;_costStartTs=(startTs===undefined||startTs===null)?'':startTs;document.getElementById('costinput').value=((currentVal===null||currentVal===undefined)?'':currentVal);document.getElementById('costmodal').style.display='flex';document.getElementById('costinput').focus();}function closeCostModal(){document.getElementById('costmodal').style.display='none';_costChargeId=null;}function saveCost(){var v=parseFloat(document.getElementById('costinput').value);if(v===null||v===undefined||isNaN(v)||v<0){alert('Enter a valid price');return;}document.getElementById('form_charge_id').value=_costChargeId;document.getElementById('form_start_ts').value=_costStartTs;document.getElementById('form_cost_per_kwh').value=v;document.getElementById('costform').submit();}function clearCost(){if(!confirm('Clear the entered cost for this session?'))return;document.getElementById('form_charge_id').value=_costChargeId;document.getElementById('form_start_ts').value=_costStartTs;document.getElementById('form_cost_per_kwh').value='';document.getElementById('costform').submit();}document.getElementById('costmodal').addEventListener('click',function(e){if(e.target===this)closeCostModal();});document.addEventListener('keydown',function(e){if(e.key==='Escape'){var m=document.getElementById('costmodal');if(m&&m.style.display!=='none')closeCostModal();}});</script><div id="navmodal" role="dialog" aria-modal="true" aria-label="Send destination" style="display:none;position:fixed;inset:0;z-index:101;color-scheme:dark;
-background:rgba(0,0,0,.7);align-items:flex-start;justify-content:center;overflow:hidden;padding:24px 12px 12px;box-sizing:border-box">
-<div style="background:#1a1d21;border:1px solid #333;border-radius:16px;
-padding:18px;max-width:560px;width:100%;max-height:calc(100vh - 36px);max-height:calc(100dvh - 36px);margin:0;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden">
-<div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-<h3 style="margin:0">Send destination</h3>
-<button type="button" onclick="closeNavModal()" aria-label="Close Send destination" style="flex:0 0 auto;width:44px;height:44px;border-radius:999px;border:1px solid #33373d;background:#24262a;color:#fff;font-size:22px;line-height:44px;padding:0;cursor:pointer">×</button>
+<form id="costform" method="POST" action="/api/charge-cost-form" class="offscreen"><input type="hidden" name="charge_id" id="form_charge_id"><input type="hidden" name="cost_per_kwh" id="form_cost_per_kwh"><input type="hidden" name="start_ts" id="form_start_ts"></form><div id="costmodal" class="modal-overlay hidden"><div class="cost-card"><h3 class="m0012">DC charging cost</h3><p class="sub m0012">Enter what you paid per kWh:</p><form onsubmit="saveCost();return false;" class="m0"><input id="costinput" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.48" class="field"><div class="btn-row"><button type="submit" class="btn-primary">Save</button><button type="button" onclick="closeCostModal()" class="btn-ghost">Cancel</button></div><div class="mt12 centered"><a class="cost-action tiny-dim" href="#" onclick="clearCost();return false;">clear entered cost</a></div></form></div></div><div id="navmodal" role="dialog" aria-modal="true" aria-label="Send destination" class="nav-overlay hidden">
+<div class="nav-card">
+<div class="row-between">
+<h3 class="m0">Send destination</h3>
+<button type="button" onclick="closeNavModal()" aria-label="Close Send destination" class="modal-close">×</button>
 </div>
-<p class="sub" style="margin:4px 0 12px">The car wakes up and starts navigating.</p>
-<div style="position:relative">
-<input id="navq" type="text" placeholder="Search a place or address" autocomplete="off" aria-label="Search a place or address"
-style="width:100%;padding:10px 40px 10px 10px;font-size:16px;border-radius:8px;
-border:1px solid #444;background:#0b0d10;color:#fff;box-sizing:border-box">
-<button type="button" id="navclear" onclick="navClearSearch()" aria-label="Clear search" style="display:none;position:absolute;right:6px;top:50%;transform:translateY(-50%);width:28px;height:28px;border-radius:999px;border:none;background:#2c2f34;color:#fff;cursor:pointer;font-size:17px;line-height:28px;padding:0">×</button>
+<p class="sub m0412">The car wakes up and starts navigating.</p>
+<div class="rel">
+<input id="navq" type="text" placeholder="Search a place or address, press Enter" autocomplete="off" aria-label="Search a place or address, press Enter" class="field field-nav">
+<button type="button" id="navclear" onclick="navClearSearch()" aria-label="Clear search" class="clear-btn hidden">×</button>
 </div>
-<p class="sub" style="margin:6px 0 0;font-size:12px">You can also paste a Google Maps link.</p>
-<div id="navtabs" style="display:none;gap:8px;margin-top:12px">
-<button type="button" id="navtabrec" onclick="navSetTab('rec')" style="padding:6px 14px;border-radius:999px;border:1px solid #f2f2f2;background:#f2f2f2;color:#111;font-weight:600;cursor:pointer">Recents</button>
-<button type="button" id="navtabfav" onclick="navSetTab('fav')" style="padding:6px 14px;border-radius:999px;border:1px solid #33373d;background:#24262a;color:#9aa0a6;font-weight:500;cursor:pointer">Favorites</button>
+<p class="sub fnote">You can also paste a Google Maps link.</p>
+<div id="navtabs" class="navtabs hidden">
+<button type="button" id="navtabrec" onclick="navSetTab('rec')" class="npill npill-on">Recents</button>
+<button type="button" id="navtabfav" onclick="navSetTab('fav')" class="npill">Favorites</button>
 </div>
-<div id="navlist" style="margin-top:8px;flex:1 1 auto;min-height:0;overflow-y:auto;padding-right:2px"></div>
+<div id="navlist" class="navlist"></div>
 <div id="navselhome"></div>
-<div id="navsel" onclick="event.stopPropagation()" style="display:none;margin-top:10px;padding-top:12px;border-top:1px solid #2c2f34">
-<img id="navmap" alt="Map of the selected place" style="display:none;width:100%;height:180px;object-fit:cover;border-radius:10px;margin-top:0">
-<p id="navenergy" class="sub" style="margin:10px 0 0"></p>
-<div id="navtight" style="display:none;margin-top:12px">
-<div style="display:flex;gap:8px;align-items:center">
+<div id="navsel" onclick="event.stopPropagation()" class="navsel hidden">
+<a id="navmaplink" target="_blank" rel="noopener noreferrer" title="Open in Google Maps"><img id="navmap" alt="Map of the selected place" class="navmap hidden"></a>
+<p id="navenergy" class="sub m1000"></p>
+<div id="navtight" class="navtight hidden">
+<div class="tight-row">
 <span class="sub">Trip:</span>
-<button type="button" id="navow" onclick="navSetRound(false)" style="padding:6px 12px;border-radius:999px;border:1px solid #f2f2f2;background:#f2f2f2;color:#111;font-weight:600;cursor:pointer">One way</button>
-<button type="button" id="navrt" onclick="navSetRound(true)" style="padding:6px 12px;border-radius:999px;border:1px solid #33373d;background:#24262a;color:#9aa0a6;font-weight:500;cursor:pointer">Round trip</button>
+<button type="button" id="navow" onclick="navSetRound(false)" class="npill npill-sm npill-on">One way</button>
+<button type="button" id="navrt" onclick="navSetRound(true)" class="npill npill-sm">Round trip</button>
 </div>
-<p id="navtightmsg" class="sub" style="margin:10px 0 0;color:#ffb340"></p>
-<button type="button" id="navplanbtn" onclick="navPlan()" style="display:none;margin-top:10px;padding:9px 12px;border-radius:8px;border:1px solid #444;background:transparent;color:#fff;cursor:pointer">Let the car plan charging</button>
-<div id="navplan" class="sub" style="margin-top:10px"></div>
+<p id="navtightmsg" class="sub tight-msg"></p>
+<button type="button" id="navplanbtn" onclick="navPlan()" class="plan-btn hidden">Let the car plan charging</button>
+<div id="navplan" class="sub mt10"></div>
 </div>
-<div id="navstatus" class="sub" style="margin-top:14px"></div>
-<div style="display:flex;gap:10px;margin-top:16px">
-<button type="button" id="navsendbtn" onclick="navSend()" disabled style="flex:1;padding:10px;border-radius:8px;
-border:none;background:#7ed321;color:#000;font-weight:600;cursor:pointer;opacity:.45">Send</button>
-<button type="button" onclick="closeNavModal()" style="flex:1;padding:10px;border-radius:8px;
-border:1px solid #444;background:transparent;color:#fff;cursor:pointer">Cancel</button>
+<div id="navstatus" class="sub mt14"></div>
+<div class="btn-row">
+<button type="button" id="navsendbtn" onclick="navSend()" disabled class="btn-primary">Send</button>
+<button type="button" onclick="navDeselect()" class="btn-ghost">Cancel</button>
 </div>
 </div>
 </div></div>
-<script>
-var _navCar = null, _navWhMi = 380, _navSaved = [], _navListArr = [],
-    _navPlace = null, _navSelIdx = null, _navMode = 'direct', _navRound = false,
-    _navJob = null, _navTimer = null, _navSearchTimer = null, _navTab = 'rec';
-var _navUsableKwh = 87.9;  // refreshed from /api/nav/state (config.USABLE_KWH)
-var NAV_ROAD_FACTOR = 1.3;  // straight-line distance to road estimate
-function openNavModal() {
-  _navPlace = null; _navSelIdx = null; _navMode = 'direct'; _navRound = false; _navJob = null;
-  _navTab = 'rec';
-  document.getElementById('navmodal').style.display = 'flex';
-  document.getElementById('navq').value = '';
-  navUpdateClear();
-  navParkSel();
-  document.getElementById('navstatus').textContent = '';
-  document.getElementById('navlist').innerHTML = '<p class="sub">Loading your places...</p>';
-  navSetSend(false, 'Send');
-  fetch('/api/nav/state').then(function(r) { return r.json(); }).then(function(j) {
-    if (j && j.ok === false && j.error) {
-      document.getElementById('navlist').innerHTML = '<p class="sub">' + navEsc(j.error) + '</p>';
-      return;
-    }
-    _navCar = j.car || null; _navWhMi = j.wh_mi || 380;
-    if (j.usable_kwh) _navUsableKwh = j.usable_kwh;
-    _navSaved = j.places || [];
-    navShowBrowse();
-  }).catch(function() {
-    document.getElementById('navlist').innerHTML = '<p class="sub">Could not load your places. Search still works.</p>';
-  });
-  document.getElementById('navq').focus();
-}
-function closeNavModal() {
-  document.getElementById('navmodal').style.display = 'none';
-  if (_navTimer) { clearInterval(_navTimer); _navTimer = null; }
-}
-function navSetSend(enabled, label) {
-  var b = document.getElementById('navsendbtn');
-  b.disabled = !enabled; b.style.opacity = enabled ? '1' : '.45';
-  if (label) b.textContent = label;
-}
-function navSegBtn(el, active) {
-  if (!el) return;
-  el.style.background = active ? '#f2f2f2' : '#24262a';
-  el.style.color = active ? '#111' : '#9aa0a6';
-  el.style.borderColor = active ? '#f2f2f2' : '#33373d';
-  el.style.fontWeight = active ? '600' : '500';
-}
-function navUpdateClear() {
-  var b = document.getElementById('navclear');
-  var q = document.getElementById('navq');
-  if (b && q) b.style.display = q.value ? 'block' : 'none';
-}
-function navClearSearch() {
-  var q = document.getElementById('navq');
-  if (_navSearchTimer) { clearTimeout(_navSearchTimer); _navSearchTimer = null; }
-  if (q) q.value = '';
-  navUpdateClear();
-  navShowBrowse();
-  if (q) q.focus();
-}
-function navParkSel() {
-  var sel = document.getElementById('navsel');
-  var home = document.getElementById('navselhome');
-  if (sel && home && sel.parentNode !== home) home.appendChild(sel);
-  if (sel) sel.style.display = 'none';
-  navClearRowSel();
-}
-function navClearRowSel() {
-  var rows = document.querySelectorAll('#navlist .navrow');
-  for (var r = 0; r < rows.length; r++) {
-    rows[r].style.borderColor = '#2c2f34';
-    rows[r].style.background = 'transparent';
-  }
-}
-function navExpandSel(row) {
-  var sel = document.getElementById('navsel');
-  if (!sel) return;
-  if (row) row.appendChild(sel);
-  sel.style.display = 'block';
-  navClearRowSel();
-  if (row) {
-    row.style.borderColor = '#7ed321';
-    row.style.background = 'rgba(126,211,33,.07)';
-    setTimeout(function() { row.scrollIntoView({block: 'start', behavior: 'smooth'}); }, 40);
-  }
-}
-function navRow(p, i) {
-  var dist = (p.distance_mi !== undefined && p.distance_mi !== null) ? ' &middot; ' + p.distance_mi + ' mi' : '';
-  return '<div class="navrow" onclick="navPick(' + i + ', this)" style="padding:9px 10px;border:1px solid #2c2f34;border-radius:10px;margin-bottom:8px;cursor:pointer;background:transparent">' +
-    '<div style="font-weight:600">' + navEsc(p.name) + '</div>' +
-    '<div style="color:#a1a1a6;font-size:13px;margin-top:4px;line-height:1.4">' + navEsc(p.address || '') + dist + '</div></div>';
-}
-function navEsc(s) {
-  return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-function navSetTab(t) {
-  _navTab = t;
-  navShowBrowse();
-}
-function navShowBrowse() {
-  navParkSel(); _navPlace = null; _navSelIdx = null; navSetSend(false, 'Send');
-  document.getElementById('navtabs').style.display = 'flex';
-  navSegBtn(document.getElementById('navtabrec'), _navTab === 'rec');
-  navSegBtn(document.getElementById('navtabfav'), _navTab === 'fav');
-  var seen = {}, out = [];
-  _navSaved.forEach(function(p) {
-    var isFav = (p.type || '').indexOf('FAVORITE') === 0;
-    if ((_navTab === 'fav') !== isFav) return;
-    var key = p.place_id || (p.lat + ',' + p.lon);
-    if (seen[key]) return; seen[key] = 1; out.push(p);
-  });
-  _navListArr = (_navTab === 'rec') ? out.slice(0, 12) : out;
-  var html = '';
-  _navListArr.forEach(function(p, i) { html += navRow(p, i); });
-  document.getElementById('navlist').innerHTML = html ||
-    ('<p class="sub">' + (_navTab === 'fav' ? 'No favorites saved in Rivian.' : 'No recent places.') + '</p>');
-}
-document.getElementById('navq').addEventListener('input', function() {
-  navUpdateClear();
-  var q = this.value.trim();
-  if (_navSearchTimer) clearTimeout(_navSearchTimer);
-  if (!q) { navShowBrowse(); return; }
-  document.getElementById('navtabs').style.display = 'none';
-  if (q.indexOf('http') === 0 && (q.indexOf('maps') >= 0 || q.indexOf('telenav') >= 0 || q.indexOf('goo.gl') >= 0)) {
-    _navListArr = [{name: 'Map link', address: q, url: q, lat: null, lon: null, place_id: null}];
-    navParkSel(); _navPlace = null; _navSelIdx = null; navSetSend(false, 'Send');
-    document.getElementById('navlist').innerHTML = '<p class="sub" style="margin:0 0 8px">Link</p>' + navRow(_navListArr[0], 0);
-    return;
-  }
-  if (q.length < 3) return;
-  _navSearchTimer = setTimeout(function() {
-    navParkSel(); _navPlace = null; _navSelIdx = null; navSetSend(false, 'Send');
-    fetch('/api/nav/search?q=' + encodeURIComponent(q)).then(function(r) { return r.json(); }).then(function(j) {
-      if (!j.ok) { document.getElementById('navlist').innerHTML = '<p class="sub">' + navEsc(j.error || 'Search failed') + '</p>'; return; }
-      _navListArr = j.results || [];
-      var html = _navListArr.length ? '<p class="sub" style="margin:0 0 8px">Results</p>' : '<p class="sub">No matches. Try a street address.</p>';
-      _navListArr.forEach(function(p, i) { html += navRow(p, i); });
-      document.getElementById('navlist').innerHTML = html;
-    }).catch(function() {
-      document.getElementById('navlist').innerHTML = '<p class="sub">Search failed. Try again.</p>';
-    });
-  }, 800);
-});
-function navPick(i, row) {
-  _navPlace = _navListArr[i]; _navSelIdx = i; _navMode = 'direct'; _navRound = false;
-  document.getElementById('navplan').innerHTML = '';
-  document.getElementById('navstatus').textContent = '';
-  var img = document.getElementById('navmap');
-  if (_navPlace.lat !== null && _navPlace.lat !== undefined) {
-    img.src = '/api/nav/map?lat=' + _navPlace.lat + '&lon=' + _navPlace.lon;
-    img.style.display = 'block';
-  } else { img.style.display = 'none'; }
-  navExpandSel(row);
-  navSetSend(true, 'Send');
-  navRenderEnergy();
-}
-function _havMi(lat1, lon1, lat2, lon2) {
-  var R = 3958.8, t = Math.PI / 180;
-  var x = Math.sin((lat2 - lat1) * t / 2), y = Math.sin((lon2 - lon1) * t / 2);
-  var h = x * x + Math.cos(lat1 * t) * Math.cos(lat2 * t) * y * y;
-  return 2 * R * Math.asin(Math.sqrt(h));
-}
-function navEstimate() {
-  if (!_navCar || !_navPlace || _navPlace.lat === null || _navPlace.lat === undefined) return null;
-  if (_navCar.lat === null || _navCar.soc === null || _navCar.soc === undefined) return null;
-  var roadMi = _havMi(_navCar.lat, _navCar.lon, _navPlace.lat, _navPlace.lon) * NAV_ROAD_FACTOR;
-  var kwh = roadMi * _navWhMi / 1000;
-  var arrival = _navCar.soc - kwh / _navUsableKwh * 100;
-  return {roadMi: roadMi, arrival: arrival, rtArrival: _navCar.soc - 2 * kwh / _navUsableKwh * 100};
-}
-function navRenderEnergy() {
-  var line = document.getElementById('navenergy');
-  var tight = document.getElementById('navtight');
-  var est = navEstimate();
-  if (!_navPlace || _navPlace.lat === null || _navPlace.lat === undefined) {
-    line.textContent = 'The car will resolve this link. No charge estimate for links.';
-    tight.style.display = 'none'; return;
-  }
-  if (!est) { line.textContent = ''; tight.style.display = 'none'; return; }
-  var shown = _navRound ? est.rtArrival : est.arrival;
-  line.textContent = 'About ' + Math.round(est.roadMi) + ' mi by road' +
-    (_navRound ? ' each way' : '') + ". You'd arrive at about " +
-    Math.max(0, Math.round(shown)) + '% at your usual efficiency.';
-  var ow = document.getElementById('navow'), rt = document.getElementById('navrt');
-  navSegBtn(ow, !_navRound);
-  navSegBtn(rt, _navRound);
-  if (est.arrival < 45 || est.rtArrival < 45) {
-    tight.style.display = 'block';
-    var msg = document.getElementById('navtightmsg');
-    var btn = document.getElementById('navplanbtn');
-    if (shown < 20) {
-      msg.textContent = "That's a lower arrival charge than is comfortable.";
-      btn.style.display = 'block';
-    } else { msg.textContent = ''; btn.style.display = 'none'; }
-  } else { tight.style.display = 'none'; }
-}
-function navSetRound(b) {
-  _navRound = b; _navMode = 'direct';
-  document.getElementById('navplan').innerHTML = '';
-  navSetSend(true, 'Send');
-  navRenderEnergy();
-}
-function navPlan() {
-  var btn = document.getElementById('navplanbtn');
-  btn.disabled = true; btn.textContent = 'Asking the car...';
-  fetch('/api/nav/plan', {method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({place: _navPlace, round_trip: _navRound})
-  }).then(function(r) { return r.json(); }).then(function(j) {
-    btn.disabled = false; btn.textContent = 'Let the car plan charging';
-    if (!j.ok) { document.getElementById('navplan').textContent = j.error || 'Planning failed.'; return; }
-    var txt = "The car's plan: " + Math.round(j.distance_mi) + ' mi, about ' +
-      j.drive_minutes + ' min of driving, arriving at about ' +
-      Math.round(j.final_arrival_soc !== null ? j.final_arrival_soc : j.arrival_soc) + '%.';
-    if (j.chargers && j.chargers.length) {
-      txt += ' Charging stops: ' + j.chargers.map(function(c) { return c.name + ' (~' + c.minutes + ' min)'; }).join(', ') + '.';
-    } else { txt += ' No charging stop needed.'; }
-    if (!j.reachable) txt += ' Even with charging, the car says this is not reachable right now.';
-    document.getElementById('navplan').textContent = txt;
-    _navMode = 'trip';
-    navSetSend(true, 'Send trip');
-  }).catch(function() {
-    btn.disabled = false; btn.textContent = 'Let the car plan charging';
-    document.getElementById('navplan').textContent = 'Planning failed. Try again.';
-  });
-}
-function navSend() {
-  navSetSend(false);
-  document.getElementById('navstatus').textContent = 'Sending to the car...';
-  fetch('/api/nav/send', {method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({place: _navPlace, mode: _navMode, round_trip: _navRound})
-  }).then(function(r) { return r.json(); }).then(function(j) {
-    if (!j.ok) {
-      document.getElementById('navstatus').textContent = j.error || 'Send failed.';
-      navSetSend(true, _navMode === 'trip' ? 'Send trip' : 'Send'); return;
-    }
-    _navJob = j.job_id;
-    var waited = 0;
-    if (_navTimer) clearInterval(_navTimer);
-    _navTimer = setInterval(function() {
-      waited += 3;
-      fetch('/api/nav/status?job=' + _navJob).then(function(r) { return r.json(); }).then(function(s) {
-        if (!s.ok) return;
-        var job = s.job;
-        if (job.state === 'confirmed') {
-          clearInterval(_navTimer); _navTimer = null;
-          var names = (job.route.destinations || []).map(function(d) { return d.name; }).join(', ');
-          var txt = 'Car is navigating to ' + names + '.';
-          if (job.route.chargers && job.route.chargers.length) {
-            txt += ' Charging stops the car planned: ' + job.route.chargers.map(function(c) { return c.name + ' (~' + c.minutes + ' min)'; }).join(', ') + '.';
-          }
-          document.getElementById('navstatus').textContent = txt;
-        } else if (job.state === 'failed') {
-          clearInterval(_navTimer); _navTimer = null;
-          document.getElementById('navstatus').textContent = job.error || 'The send failed.';
-          navSetSend(true, _navMode === 'trip' ? 'Send trip' : 'Send');
-        } else {
-          document.getElementById('navstatus').textContent = 'Sent. Waiting for the car to confirm, usually under a minute.';
-        }
-        if (waited > 170 && _navTimer) {
-          clearInterval(_navTimer); _navTimer = null;
-          document.getElementById('navstatus').textContent = 'Still no confirmation from the car. Check the car screen before sending again.';
-        }
-      }).catch(function() {});
-    }, 3000);
-  }).catch(function() {
-    document.getElementById('navstatus').textContent = 'Send failed. Try again.';
-    navSetSend(true, _navMode === 'trip' ? 'Send trip' : 'Send');
-  });
-}
-document.getElementById('navmodal').addEventListener('click', function(e) {
-  if (e.target === this) closeNavModal();
-});
-document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') {
-    var m = document.getElementById('navmodal');
-    if (m && m.style.display !== 'none') closeNavModal();
-  }
-});
-</script>
+__SCRIPTS__
 </body></html>"""
 
 _BOLT_SVG = ('<svg class="bolt" viewBox="0 0 24 24" aria-hidden="true">'
             '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>'
             '</svg>')
 
-JS_TEMPLATE = """
-(function() {
-  var el = document.getElementById('poll-age');
-  if (!el || !el.dataset.ts) return;
-  var timestamp = Number(el.dataset.ts);
-  if (!Number.isFinite(timestamp)) return;
-  function updatePollAge() {
-    var seconds = Math.max(0, Math.floor(Date.now() / 1000 - timestamp));
-    var age = 'just now';
-    if (seconds >= 86400) {
-      var days = Math.floor(seconds / 86400);
-      age = days + (days === 1 ? ' day ago' : ' days ago');
-    } else if (seconds >= 3600) {
-      age = Math.floor(seconds / 3600) + ' hr ago';
-    } else if (seconds >= 60) {
-      age = Math.floor(seconds / 60) + ' min ago';
-    }
-    el.textContent = 'Last poll ' + age;
-  }
-  updatePollAge();
-  setInterval(updatePollAge, 60000);
-})();
-/* Evaluated at use time, not cached, so an OS-level change while the page is
-   open takes effect on the next interaction. */
-function prefersReducedMotion() {
-  return !!(window.matchMedia &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-}
-/* Segmented range controls (battery 7/14/30d, pack health and overnight
-   trend 1M/6M/1Y/All): one helper, each button shows its own panel. */
-function segToggle(segId, prefix) {
-  var seg = document.getElementById(segId);
-  if (!seg) return;
-  seg.querySelectorAll('button').forEach(b => {
-    b.addEventListener('click', () => {
-      seg.querySelectorAll('button')
-        .forEach(x => x.classList.remove('on'));
-      b.classList.add('on');
-      seg.querySelectorAll('button').forEach(x => {
-        document.getElementById(prefix + x.dataset.n).hidden = (x !== b);
-      });
-    });
-  });
-}
-segToggle('battseg', 'batt');
-segToggle('packseg', 'pack');
-segToggle('trendseg', 'trend');
-/* Daily activity: progressive list. Day groups ship as JSON; the latest 7 render
-   first, "Show earlier" appends 7 more, and the month dropdown jumps to a
-   month (showing that whole month, then earlier from there). */
-(function () {
-  var dataEl = document.getElementById('actdata');
-  var listEl = document.getElementById('actdays');
-  var moreBtn = document.getElementById('actshowmore');
-  var monthSel = document.getElementById('actmonth');
-  if (!dataEl || !listEl || !moreBtn) return;
-  var days = JSON.parse(dataEl.textContent).days;
-  var PAGE = 7, start = 0, shown = PAGE;
-  /* render() rebuilds the whole list; render(from) appends days[from..end)
-     to what is already on screen, so rows the user has expanded stay open
-     and the scroll position holds when "Show earlier" is pressed. */
-  function render(from) {
-    var end = Math.min(start + shown, days.length), html = '', i, d;
-    if (from == null) { listEl.innerHTML = ''; from = start; }
-    for (i = from; i < end; i++) {
-      d = days[i];
-      html += '<details class="aday"><summary><div class="asum"><span>' +
-        d.title + '</span><span class="dim">' + d.summary + '</span></div>' +
-        d.abar + '</summary>' + d.body + '</details>';
-    }
-    listEl.insertAdjacentHTML('beforeend', html);
-    moreBtn.hidden = end >= days.length;
-  }
-  moreBtn.addEventListener('click', function () {
-    var from = Math.min(start + shown, days.length);
-    var prevCount = from - start;
-    shown += PAGE;
-    render(from);
-    if (prefersReducedMotion()) return;
-    /* Staggered entrance for the freshly appended rows. */
-    var rows = listEl.querySelectorAll('details.aday');
-    var fresh = rows.length - prevCount, i;
-    for (i = 0; i < fresh; i++) {
-      rows[prevCount + i].animate(
-        [{opacity: 0, transform: 'translateY(14px)'},
-         {opacity: 1, transform: 'translateY(0)'}],
-        {duration: 340, delay: i * 60, easing: 'cubic-bezier(0.4,0,0.2,1)',
-         fill: 'backwards'});
-    }
-  });
-  if (monthSel) monthSel.addEventListener('change', function () {
-    var m = monthSel.value, i;
-    start = 0; shown = PAGE;
-    if (m !== 'latest') {
-      for (i = 0; i < days.length; i++)
-        if (days[i].month === m) { start = i; break; }
-      shown = 0;
-      for (i = start; i < days.length && days[i].month === m; i++) shown++;
-    }
-    render();
-  });
-  render();
-})();
-
-/* Smooth accordions: intercept the native <details> toggle on day rows,
-   charging rows, and the night-by-night breakdown, and animate the body
-   height instead. Own IIFE (not inside the activity one, which returns early
-   when there is no activity data). State is read from the live `open`
-   attribute, so toggles done by the browser itself (find-in-page auto-open,
-   #fragment navigation) can never desync it; data-closing marks only the
-   in-flight collapse, during which `open` is still set. */
-(function () {
-  var EASE = 'cubic-bezier(0.4,0,0.2,1)';
-  function isOpen(details) {
-    return details.open && details.dataset.closing !== '1';
-  }
-  function setAccOpen(details, open) {
-    var body = details.querySelector('.abody, .chargedetail');
-    if (!body) { details.open = open; return; }
-    /* Measure BEFORE cancelling: cancel() snaps the body back to its natural
-       size, so reversing a half-finished animation would otherwise jump. */
-    var from = details.open ? body.getBoundingClientRect().height : 0;
-    var op = details.open ? parseFloat(getComputedStyle(body).opacity) : .3;
-    body.getAnimations().forEach(function (a) { a.cancel(); });
-    if (open) {
-      delete details.dataset.closing;
-      details.open = true;
-      /* Lazy images reserve their box via width/height attributes, so
-         scrollHeight is already final here. */
-      var to = body.scrollHeight;
-      body.animate([{height: from + 'px', opacity: op},
-                    {height: to + 'px', opacity: 1}],
-                   {duration: 320, easing: EASE});
-    } else {
-      details.dataset.closing = '1';
-      var anim = body.animate([{height: from + 'px', opacity: op},
-                               {height: '0px', opacity: .3}],
-                              {duration: 260, easing: EASE, fill: 'forwards'});
-      anim.onfinish = function () {
-        /* fill:forwards holds the collapsed state until `open` is removed,
-           so there is no frame at full height. Cancel afterwards so no stale
-           fill can hide the body if the page later toggles natively. */
-        details.open = false;
-        delete details.dataset.closing;
-        anim.cancel();
-      };
-    }
-  }
-  document.addEventListener('click', function (e) {
-    var t = e.target;
-    var summary = (t && t.closest) ? t.closest('summary') : null;
-    if (!summary) return;
-    var details = summary.parentElement;
-    if (!details || details.tagName !== 'DETAILS') return;
-    if (!details.classList.contains('aday') &&
-        !details.classList.contains('sacc')) return;
-    if (prefersReducedMotion() ||
-        !details.querySelector('.abody, .chargedetail')) return;
-    e.preventDefault();
-    setAccOpen(details, !isOpen(details));
-  });
-})();
-
-/* Back-to-top: appears past 600px of scroll. rAF-throttled scroll
-   check: explicit and unambiguous beats clever. */
-(function () {
-  var btn = document.getElementById('toTop');
-  if (!btn) return;
-  var ticking = false;
-  function update() {
-    btn.classList.toggle('show',
-      window.scrollY > 600);
-    ticking = false;
-  }
-  window.addEventListener('scroll', function () {
-    if (!ticking) { ticking = true; requestAnimationFrame(update); }
-  }, {passive: true});
-  update();
-  btn.addEventListener('click', function () {
-    window.scrollTo({top: 0,
-                     behavior: prefersReducedMotion() ? 'auto' : 'smooth'});
-    /* The button hides itself once we are near the top, which would drop
-       keyboard focus to <body>. Park focus on the page container instead so
-       the next Tab continues from the top of the page. */
-    var pageTop = document.querySelector('.wrap');
-    if (pageTop) {
-      pageTop.setAttribute('tabindex', '-1');
-      pageTop.focus({preventScroll: true});
-    }
-  });
-})();
-
-/* Trip maps are static, tile-backed images rendered at build time (the
-   viewer blocks external network), so no client-side map library is needed. */
-"""
 
 
 # ---------------------------------------------------------------- static maps
@@ -1218,7 +558,6 @@ _MAP_W, _MAP_H = 880, 440
 # "API KEY REQUIRED"; OSM standard was too busy for the trip map.)
 _TILE_URL = ("https://server.arcgisonline.com/ArcGIS/rest/services/"
              "Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}")
-_TILE_FILTER = ""
 _MAP_UA = "Wattson/1.0"
 # Disk cache for map tiles: the dashboard rebuilds often (every poll during
 # a burst), and re-fetching tiles each time would hammer the tile servers
@@ -1437,9 +776,9 @@ def _day_map_html(day: str, dtrips: list[dict]) -> str:
                 url += f"?v={int(time.time())}"
         img = (f'<img src="{url}" alt="Trip map" loading="lazy" '
                f'width="{cw}" height="{ch}" '
-               f'style="width:100%;height:auto;display:block;{_TILE_FILTER}" '
+               f'class="mapimg" '
                f'onload="this.classList.add(\'ld\')" '
-               f'onerror="this.style.display=\'none\'">')
+               f'onerror="this.classList.add(\'hidden\')">')
     # Schematic fallback when tiles failed: SVG routes on the dark card.
     return (f'<div class="mapwrap">{img}{svg}'
             f'<div class="mapattr">&copy; Esri &amp; contributors</div></div>')
@@ -1469,10 +808,10 @@ def _activity_bar(day_segs: list[dict], day_start: float,
                f'{_ACT_LABEL[s["state"]]}')
         parts.append(
             f'<div class="aseg {_ACT_CLASS[s["state"]]}" '
-            f'style="left:{a / 14.4:.2f}%;width:{(b - a) / 14.4:.2f}%" '
+            f'style="--l:{a / 14.4:.2f}%;--w:{(b - a) / 14.4:.2f}%" '
             f'title="{_esc(tip)}"></div>')
     if now_min is not None:
-        parts.append(f'<div class="anow" style="left:{now_min / 14.4:.2f}%">'
+        parts.append(f'<div class="anow" style="--l:{now_min / 14.4:.2f}%">'
                      "</div>")
     return f'<div class="abar">{"".join(parts)}</div>'
 
@@ -1706,16 +1045,16 @@ def _live_charge_html(live: dict, is_home: bool = False) -> str:
         [(base / 100.0, GREEN), (added_frac, AMBER)],
         f"{soc:.0f}%" if soc is not None else "-", small, tiny)
     legend = (
-        '<div class="alegend" style="justify-content:center;margin-top:2px">'
-        f'<span><i style="background:{GREEN}"></i>plug-in {base:.0f}%</span>'
-        f'<span><i style="background:{AMBER}"></i>added</span>'
-        f'<span><i style="background:#2b2b2e"></i>empty</span></div>')
+        '<div class="alegend alegend-c">'
+        f'<span><i class="dot-g"></i>plug-in {base:.0f}%</span>'
+        f'<span><i class="dot-a"></i>added</span>'
+        f'<span><i class="dot-n"></i>empty</span></div>')
     kw_v = f'{live["kw"]:.1f}<small> kW</small>' if live.get("kw") else "-"
     kw_s = f'{live["mihr"]:.0f} mi/hr' if live.get("mihr") else "warming up"
     sess_s = f'since {_fmt_time(int(live["session_start"]))}'
     note_txt = (f'{tgt:.0f}% by about {live["end_txt"]} at this rate'
                 if live.get("end_txt") else "")
-    sub_html = (f'<div class="sub" style="text-align:center">{note_txt}</div>'
+    sub_html = (f'<div class="sub centered">{note_txt}</div>'
                 if note_txt else "")
     cost_stat = ""
     if is_home:
@@ -1752,7 +1091,7 @@ def _charge_month_summary(hist: list[dict]) -> str:
     mi = sum(c.get("miles_added") or 0 for c in chs)
     n = len(chs)
     return (
-        f'<div class="sub" style="margin:2px 0 4px">{month} &middot; '
+        f'<div class="sub m0204">{month} &middot; '
         f'{n} session{"s" if n != 1 else ""} &middot; '
         f'{kwh:.1f} kWh &middot; {mi:.0f} mi</div>')
 
@@ -1783,12 +1122,11 @@ def _get_tile(z: int, tx: int, ty: int):
     return None
 
 
-def _render_point_map(lat: float, lon: float):
+def _render_point_map(lat: float, lon: float, z: int = 16):
     """Stitch the charge-location tile window. Returns JPEG bytes, or None
     when any tile can't be fetched."""
     import io
     from PIL import Image, ImageDraw
-    z = 16
     W, H = 512, 256
     gx, gy = _merc(lon, lat, z)
     # Tile range covering the centered window, with one tile of slack
@@ -1854,7 +1192,7 @@ def _point_map_html(lat: float | None, lon: float | None,
         f'alt="Charging location: {_esc(label)}" loading="lazy" '
         f'width="512" height="256" '
         f'onload="this.classList.add(\'ld\')" '
-        f'onerror="this.closest(\'.chargemap\').style.display=\'none\'">'
+        f'onerror="this.closest(\'.chargemap\').classList.add(\'hidden\')">'
         f'</div>')
 def _session_miles(c: dict, eff: float) -> float:
     """Miles for the gas comparison: prefer BMS miles_added, else kwh*eff."""
@@ -1915,15 +1253,13 @@ def _charge_row_html(c: dict, scale: float, open_: bool,
                            '$%.2f/kWh)</span> '
                            '<a href="#" onclick="event.stopPropagation();'
                            'openCostModal(%d, %.2f, %d);return false;" '
-                           'class="cost-action" '
-                           'style="color:#7ed321;font-size:12px">edit</a></span>'
+                           'class="cost-action green tiny">edit</a></span>'
                            % (_cls3, abs(_save3), _verb3, _ev_c3, _gp_val,
                               _dc_rate, c["id"], _dc_rate, c["start_ts"]))
         else:
             savings_bit = ('<span><a href="#" onclick="event.stopPropagation();'
                            'openCostModal(%d, 0, %d);return false;" '
-                           'class="cost-action" '
-                           'style="color:#7ed321">? add cost</a></span>'
+                           'class="cost-action green">? add cost</a></span>'
                            % (c["id"], c["start_ts"]))
     cap = (f'{c["soc_start"]:.0f}% &rarr; {c["soc_end"]:.0f}% &middot; '
            f'{c["avg_kw"] or "-"} kW avg')
@@ -1969,7 +1305,7 @@ def _charges_html(charges: list[dict], live: dict | None = None,
                        for i, c in enumerate(hist))
         export = ("" if os.environ.get("WATTSON_DEMO") else
                   '<a href="/api/charges.csv" '
-                  'style="font-size:14px;color:var(--dim)">Export CSV</a>')
+                  'class="dim14">Export CSV</a>')
         parts.append(
             f'<div class="card"><h3 class="row"><span>Charging log</span>'
             f'{export}</h3>'
@@ -2041,7 +1377,7 @@ def _idle_table(periods: list[dict], bad: set) -> str:
             f"<td>{pct_txt}</td></tr>")
     note = ('<p class="note"><span class="warn">*</span> unusually high vs '
             'baseline.</p>' if bad else '')
-    return ('<div style="overflow-x:auto"><table class="drain">'
+    return ('<div class="xscroll"><table class="drain">'
             '<tr><th>Idle period</th><th>Duration</th>'
             '<th>Battery</th><th>Lost</th><th>Avg draw</th>'
             '<th>%/day</th></tr>'
@@ -2145,6 +1481,32 @@ def _tire_tile_html(con, now):
     return ('<div class="stat"><div class="k">Tires</div>'
             '<div class="tire4">%s</div>%s</div>'
             % ("".join(cells), sub_html))
+
+
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+def _asset_text(name: str) -> str:
+    return (_STATIC_DIR / name).read_text(encoding="utf-8")
+
+
+def _styles_markup() -> str:
+    """Dashboard CSS as it goes into the page: a <link> to
+    static/dashboard.css for the served dashboard. Demo builds
+    inline the file instead, so the demo stays one self-contained
+    page."""
+    if os.environ.get("WATTSON_DEMO"):
+        return "<style>\n" + _asset_text("dashboard.css") + "</style>"
+    return '<link rel="stylesheet" href="/dashboard.css">'
+
+
+def _scripts_markup() -> str:
+    """Dashboard JS as it goes into the page: a <script src> to
+    static/dashboard.js for the served dashboard; inlined by demo
+    builds, like the CSS."""
+    if os.environ.get("WATTSON_DEMO"):
+        return "<script>\n" + _asset_text("dashboard.js") + "</script>"
+    return '<script src="/dashboard.js"></script>'
 
 
 def generate() -> None:
@@ -2270,18 +1632,18 @@ def generate() -> None:
             for r in _savings_rows[:10]
         )
         savings_table = (
-            '<div class="card" style="margin-top:16px">'
+            '<div class="card mt16">'
             "<h3>Fuel savings by session</h3>"
             '<div class="sub">Per charging session, priced at each '
             'day&apos;s gas price</div>'
-            '<div style="overflow-x:auto"><table class="ctab"><thead><tr>'
+            '<div class="xscroll"><table class="ctab"><thead><tr>'
             "<th>Date</th><th>Type</th><th>kWh</th><th>EV cost</th>"
             "<th>Gas $/gal</th><th>Gas cost</th><th>Saved</th>"
             "</tr></thead><tbody>" + _srows + "</tbody></table></div></div>"
         )
     else:
         savings_table = (
-            '<div class="card" style="margin-top:16px">'
+            '<div class="card mt16">'
             "<h3>Fuel savings by session</h3>"
             '<p class="note">'
             + ("Enter a DC price in the charging log to compare those sessions."
@@ -2500,8 +1862,7 @@ def generate() -> None:
             chart = bars
         table = _idle_table(periods, bad)
         details = (
-            '<details class="sacc"><summary class="dim" '
-            'style="font-size:14px;cursor:pointer;margin-top:14px">'
+            '<details class="sacc"><summary class="dim lbl14">'
             'Period-by-period breakdown</summary>'
             f'<div class="abody">{table}</div></details>')
         return f'<div class="sub">{avg}</div>' + chart + details
@@ -2548,7 +1909,6 @@ def generate() -> None:
     trip_month_html, trips_html = _activity_html(
         trips, errands, activity_segments())
 
-    script = JS_TEMPLATE
     doc = HTML_TEMPLATE
     live = _live_charge(snapshots, now)
     if live:
@@ -2600,8 +1960,11 @@ def generate() -> None:
         "__BOLT__": (_BOLT_SVG if live and soc is not None and soc >= 8
                      else ""),
         "__LOCATION__": location_html,
-        "__NAVBTN__": ("" if os.environ.get("WATTSON_DEMO") else
-                      '<button type="button" onclick="openNavModal()" style="flex:0 0 auto;padding:7px 14px;border-radius:999px;border:1px solid #3a3f45;background:rgba(255,255,255,.05);color:#e8eaed;font-size:13px;font-weight:600;cursor:pointer">Send destination</button>'),
+        "__NAVBTN__": ("" if (os.environ.get("WATTSON_DEMO")
+                            or not token_from_env())
+                       else '<button type="button" id="navopen" '
+                            'class="navbtn" onclick="openNavModal()">'
+                            'Send destination</button>'),
         "__IDLESTAT__": idle_stat,
         "__TIRETILE__": tiretile,
         "__LIFEMI__": f"{lifetime_mpk:.2f}" if lifetime_mpk else "-",
@@ -2620,7 +1983,8 @@ def generate() -> None:
         "__TRENDNOTE__": trend_note,
         "__CHARGING_TOP__": charging_top,
         "__CHARGING_BOTTOM__": charging_bottom,
-        "__SCRIPT__": script,
+        "__STYLES__": _styles_markup(),
+        "__SCRIPTS__": _scripts_markup(),
     }
     for k, v in repl.items():
         doc = doc.replace(k, v)

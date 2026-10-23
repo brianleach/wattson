@@ -202,6 +202,16 @@ Hobby project, no SLA. Issues and pull requests welcome.
 Built something cool with Wattson? I'd love to hear about it. And pay
 it forward: keep it open, keep it fun.
 
+## Credits
+
+Map tiles by [Esri](https://www.esri.com) (World Dark Gray
+Canvas). Rivian API access via the
+[rivian-python-client](https://pypi.org/project/rivian-python-client/)
+library (MIT). The send-destination protocol was reverse
+engineered by
+[walthowd/rivian-gen2-key-poc](https://github.com/walthowd/rivian-gen2-key-poc)
+(MIT); nav.py's header carries the details.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

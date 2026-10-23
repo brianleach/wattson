@@ -274,13 +274,15 @@ def _saved_places_cached():
     import nav
     if _time.time() - _saved_cache["ts"] < 300 and _saved_cache["places"]:
         return _saved_cache["places"], True
-    try:
-        places = nav.saved_places()
-        _saved_cache.update(ts=_time.time(), places=places)
-        return places, True
-    except Exception:
-        app.logger.exception("saved places fetch failed")
-        return _saved_cache["places"], False
+    for attempt in (1, 2):
+        try:
+            places = nav.saved_places()
+            _saved_cache.update(ts=_time.time(), places=places)
+            return places, True
+        except Exception:
+            app.logger.exception(
+                "saved places fetch failed (attempt %d)", attempt)
+    return _saved_cache["places"], False
 
 
 def _home_place(places):
@@ -435,19 +437,25 @@ def nav_send():
         return jsonify({"ok": False,
                         "error": "Trips need a place, not a link"}), 400
     car, _wh = _car_state()
-    if car.get("lat") is None:
-        return jsonify({"ok": False, "error": "No recent car data"}), 503
-    places, _fresh = _saved_places_cached()
-    home = _home_place(places)
-    if round_trip and home is None:
-        return jsonify({"ok": False, "error": "A round trip needs a Home"
-                        " place: save Home in the Rivian app, or set home"
-                        " coordinates in .env."}), 400
-    if nav.send_in_progress():
+    home = None
+    if mode == "trip":
+        # Only trip sends use the car's position (route origin)
+        # and a Home place (the return leg). A direct share needs
+        # neither, and must not fail or burn a Rivian call on them.
+        if car.get("lat") is None:
+            return jsonify({"ok": False,
+                            "error": "No recent car data"}), 503
+        places, _fresh = _saved_places_cached()
+        home = _home_place(places)
+        if round_trip and home is None:
+            return jsonify({"ok": False, "error": "A round trip needs a"
+                            " Home place: save Home in the Rivian app,"
+                            " or set home coordinates in .env."}), 400
+    job_id = nav.start_send_job(place, mode, round_trip,
+                                home, {"lat": car.get("lat"), "lon": car.get("lon")})
+    if job_id is None:
         return jsonify({"ok": False, "error": "A send is already in"
                         " progress. Wait for the car to confirm it."}), 409
-    job_id = nav.start_send_job(place, mode, round_trip,
-                                home, {"lat": car["lat"], "lon": car["lon"]})
     return jsonify({"ok": True, "job_id": job_id})
 
 
@@ -470,8 +478,15 @@ def nav_map():
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
         return "Bad coordinates", 400
     try:
+        zoom = int(request.args.get("z", 15))
+    except (TypeError, ValueError):
+        zoom = 15
+    # 16 is the tile ceiling: past it the provider serves a
+    # placeholder tile, which the tile cache would keep for days.
+    zoom = max(3, min(16, zoom))
+    try:
         import report
-        img = report._render_point_map(lat, lon)
+        img = report._render_point_map(lat, lon, z=zoom)
     except Exception:
         app.logger.exception("nav map render failed")
         img = None

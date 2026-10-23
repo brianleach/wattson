@@ -21,6 +21,105 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until a dashboard password (WATTSON_DASHBOARD_TOKEN) is set, since
   they act on the car and read its saved places and live location.
 
+### Changed
+- The Send destination confirmation map renders at zoom 15
+  (trip and charge maps are unchanged), and clicking it opens
+  the place in Google Maps in a new tab.
+- The dashboard's CSS and JavaScript moved out of the generated
+  HTML into static/dashboard.css and static/dashboard.js, which the
+  web server serves as their own files (the page links them).
+  Demo builds still inline both files, so the demo page remains a
+  single self-contained file.
+- No inline styles left: all dashboard markup and scripts use
+  classes from dashboard.css (the few per-render values, like bar
+  widths, are CSS custom properties), and a test guards against
+  inline styles creeping back. Place search now runs when you
+  press Enter instead of as you type, per Nominatim's usage
+  policy.
+
+### Fixed
+- Send confirmation checked only that a route report named a
+  destination the baseline did not have, never that the new
+  destination was the place that was sent, so an unrelated
+  route change during the confirmation window could confirm a
+  send. New destinations now have to match the sent place, and
+  a round trip with no captured baseline also requires the
+  route to include the trip home.
+- Direct sends no longer fail when the tracker has no recent
+  car position, and no longer fetch the saved places they
+  never use. Only trip sends need the car's position and a
+  Home place.
+- The session-token rehydration in nav.py assembles the
+  attribute name indirectly no longer; it assigns it directly,
+  like the rest of the codebase. The unused send_in_progress
+  helper is removed.
+- The inline-style guard now matches attributes
+  case-insensitively, resolves constant interpolations of the
+  attribute name, and resolves module-level variables in
+  split strings; regression tests cover all three.
+- If the API service restarted while a send was being
+  confirmed, the dashboard polled a job the new process no
+  longer knew and waited forever. It now reports that it
+  lost track of the send (the car may still have received
+  it) and stops polling.
+- Send confirmation could be fooled when no baseline route was
+  captured before the send (the car reported nothing during the
+  baseline wait): any later route counted as confirmation,
+  including the stale route a waking car re-reports. Such a
+  report now becomes the baseline unless it names the place
+  that was sent.
+- The confirmation fingerprint included charger minutes and
+  unrounded coordinates, so a routine re-plan of the car's
+  existing route could pass as a changed plan. It now compares
+  destinations (coordinates rounded to about 11 m) and charger
+  names only.
+- A send job stuck in "sending" (a network wait that never
+  returns) blocked every later send until the process
+  restarted. Jobs still running after 10 minutes are now
+  reaped as timed out.
+- The map zoom clamp allowed 17 and 18, where the tile
+  provider serves a placeholder tile that the tile cache would
+  then keep for days. The ceiling is 16, the last real zoom.
+- The Send destination focus trap cycled through the hidden
+  selection panel's buttons when nothing was selected; it now
+  cycles visible elements only. The map link also gained
+  rel="noreferrer" alongside noopener.
+- The CI email check used a regex lookahead that grep -E does
+  not support, so it never matched anything. It now matches
+  addresses first and filters out the example placeholders.
+- Session cookies are signed with a key derived from the
+  dashboard token under a domain separator, not the raw token.
+- The inline-style guard test missed single-quoted attributes,
+  interpolated property names and values, and attributes split
+  across string literals; it catches all of them now, and new
+  tests cover the round-trip coercion, the zoom clamp, and the
+  places-failure message. The README credits the map tile
+  provider and the Rivian API client library.
+- The places list could claim "No recent places" when Rivian's
+  API timed out during the load. The endpoint now retries a
+  failed fetch once, and when the places genuinely cannot load
+  the modal says so (search still works) instead of showing an
+  empty list.
+- Changing the confirmation map's zoom had no visible effect
+  for places already viewed: browsers cache each rendered map
+  for a day under a URL that did not include the zoom, so they
+  kept serving the old picture. The zoom is now part of the
+  request URL, so a zoom change fetches a fresh map.
+- The Cancel button in the Send destination panel closed the
+  whole modal; it now just deselects the place and returns to
+  the list. The modal's × (or Escape, or a backdrop click)
+  remains the way to close it.
+- Send confirmation can no longer be fooled by the car
+  re-reporting an unchanged route (traffic refresh, wake cycle):
+  a same-destination confirmation now requires the plan itself
+  to have changed. A second send is also refused atomically
+  while one is in flight; the check and the job start are a
+  single locked step.
+- /dashboard.css and /dashboard.js now require the same login as
+  the rest of the dashboard when a password is set, and the
+  Send destination button stays hidden while no password is set
+  (the feature is off in that state).
+
 ## [0.8.1] - 2026-10-21
 ### Fixed
 - Phantom drain could book driving energy as parked drain. A park's

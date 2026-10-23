@@ -181,7 +181,7 @@ def _bars(items: list[tuple[str, float, str]], fmt: str = ".2f",
     w, h, pad = 560, 150, 8
     n = len(items)
     axis = y_unit is not None
-    x0 = 42 if axis else pad
+    x0 = 50 if axis else pad
     x1 = w - pad
     if axis:
         ticks, top = _nice_ticks(raw_max)
@@ -235,7 +235,7 @@ def _bars(items: list[tuple[str, float, str]], fmt: str = ".2f",
             frac * plot_h if axis else max(4.0, frac * plot_h))
         x = x0 + gap * i + (gap - bw) / 2
         y = base_y - bh
-        if thin and color != RED:
+        if thin and color != RED and not stub:
             vlab, slab = "", ""
         else:
             vlab = labels[i] if labels else f"{val:{fmt}}"
@@ -312,12 +312,15 @@ def _heat_strip(nights: list[dict], bad: set) -> str:
         x, y = pad_l + c * step, pad_t + r * step
         if o["id"] in bad:
             fill = RED
-        elif o["no_data"] or o["watts"] <= 0:
+        elif o["no_data"] or o.get("substep") or o["watts"] <= 0:
             fill = "#2b2b2d"
         else:
             fill = amber(o["watts"] / vmax)
         if o["no_data"]:
             tip = f'{o["label"]}: no data (car was asleep)'
+        elif o.get("substep"):
+            tip = (f'{o["label"]}: below one gauge step '
+                   f'over {o["hours"]:.1f} h')
         else:
             tip = (f'{o["label"]}: {o["watts"]:.0f} W, '
                    f'{o["kwh"]:.2f} kWh over {o["hours"]:.1f} h')
@@ -1382,7 +1385,9 @@ def _idle_table(periods: list[dict], bad: set) -> str:
                 else "-")
         if o["measured"]:
             tilde = "~" if o["approx"] else ""
-            lost = f"{o['kwh']:.2f} kWh &bull; {o['soc_drop']:.1f}%"
+            drop_txt = (f"{o['soc_drop']:.1f}%"
+                        if o["soc_drop"] is not None else "-")
+            lost = f"{o['kwh']:.2f} kWh &bull; {drop_txt}"
             if o.get("substep"):
                 watts_txt = "below one gauge step"
                 pct_txt = "-"
@@ -1395,7 +1400,8 @@ def _idle_table(periods: list[dict], bad: set) -> str:
             lost = watts_txt = pct_txt = "no data"
         dur = f"{o['hours']:.1f} h"
         if o.get("reports"):
-            dur += f" &middot; {o['reports']} reports"
+            dur += (f" &middot; {o['reports']} "
+                    f"report{'s' if o['reports'] != 1 else ''}")
         rows.append(
             f"<tr><td>{label}</td>"
             f"<td>{dur}</td>"
@@ -1462,7 +1468,9 @@ def _idle_history(drains: list[dict], snapshots) -> tuple[list[dict], dict | Non
             "watts": round(d.get("watts_avg") or 0, 1),
             "pct_day": d.get("pct_per_day"),
             "soc_start": s0, "soc_end": s1,
-            "soc_drop": (round(s0 - s1, 1)
+            # analyze clamps a parked gain (wake recalibration) to zero
+            # in its stored numbers; the displayed drop agrees with it.
+            "soc_drop": (round(max(0.0, s0 - s1), 1)
                          if s0 is not None and s1 is not None else None),
             "measured": measured,
             "plugged": plugged,
@@ -1837,8 +1845,9 @@ def generate() -> None:
     # parked, that shows as a quiet "parked since" line instead.
     idles, open_park = _idle_history(drains, snapshots)
     measured_list = [o for o in idles if o["measured"]]
-    if measured_list:
-        ov = measured_list[-1]
+    with_drop = [o for o in measured_list if o["soc_drop"] is not None]
+    if with_drop:
+        ov = with_drop[-1]
         tilde = "~" if ov["approx"] else ""
         idle_stat = (
             '<a class="stat" href="#battery"><div class="k">Phantom drain</div>'

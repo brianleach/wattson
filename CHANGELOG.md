@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Send destination: a hero action sends a place to the car's
+  navigation without opening the Rivian app. Search by name or
+  address (OpenStreetMap), pick from the account's saved and recent
+  places, or paste a Google Maps link. An energy pre-check uses the
+  car's recent real efficiency; when arrival charge looks tight,
+  the car's own planner previews the trip first (arrival charge and
+  the charging stops it would add) before anything is sent. Sends
+  ride the existing signed-in session only: no paired key, no
+  Bluetooth. The cloud's "success" is not trusted; a send counts as
+  confirmed only when the car reports the route itself, with one
+  automatic re-send if it never does. The nav endpoints stay off
+  until a dashboard password (WATTSON_DASHBOARD_TOKEN) is set, since
+  they act on the car and read its saved places and live location.
 
 ## [0.8.1] - 2026-10-21
 ### Fixed

@@ -17,7 +17,7 @@ import sqlite3
 import math
 import time
 
-from config import DB_PATH
+from config import DB_PATH, USABLE_KWH
 from dashboard_auth import (SESSION_COOKIE, DashboardAuth, client_ip, is_https,
                             token_from_env)
 
@@ -210,6 +210,276 @@ def logout():
 @app.route("/api/health")
 def health():
     return jsonify({"ok": True})
+
+
+
+# ---------------------------------------------------------------------------
+# Send destination navigation (see nav.py). nginx gates /api/ when a
+# dashboard token is set; these routes also check in-app (like the CSV
+# export above) because they act on the car, and the API port should not
+# be reachable without the token just by bypassing nginx.
+# ---------------------------------------------------------------------------
+
+@app.before_request
+def _nav_gate():
+    if request.path.startswith("/api/nav/"):
+        # These routes read saved places and the car's live location and
+        # can send it somewhere, so unlike the rest of the dashboard they
+        # stay off entirely until a dashboard password is set. The
+        # default no-token install gets no nav, not open nav.
+        if not auth.token:
+            return jsonify({"ok": False, "error": "Send destination is "
+                            "off until a dashboard password is set "
+                            "(WATTSON_DASHBOARD_TOKEN)."}), 403
+        if not auth.authorized(request.headers.get("Authorization"),
+                               request.cookies.get(SESSION_COOKIE)):
+            return jsonify({"ok": False, "error": "Unauthorized"}), 401
+
+
+_saved_cache = {"ts": 0.0, "places": []}
+
+
+def _car_state():
+    """Latest snapshot + recent efficiency from the tracker DB."""
+    car = {}
+    wh_mi = None
+    try:
+        with closing(sqlite3.connect(str(DB_PATH), timeout=30)) as con:
+            row = con.execute(
+                "SELECT ts, soc, range_mi, lat, lon FROM snapshots"
+                " ORDER BY ts DESC LIMIT 1").fetchone()
+            if row:
+                car = {"ts": row[0], "soc": row[1], "range_mi": row[2],
+                       "lat": row[3], "lon": row[4]}
+            agg = con.execute(
+                "SELECT SUM(kwh_used), SUM(miles) FROM trips"
+                " WHERE miles >= 1 AND wh_per_mi BETWEEN 100 AND 900"
+                " AND start_ts > strftime('%s', 'now', '-90 days')").fetchone()
+            if agg and agg[0] and agg[1]:
+                wh_mi = agg[0] * 1000.0 / agg[1]
+            else:
+                agg = con.execute(
+                    "SELECT SUM(kwh_used), SUM(miles) FROM trips"
+                    " WHERE miles >= 1 AND wh_per_mi BETWEEN 100 AND 900"
+                ).fetchone()
+                if agg and agg[0] and agg[1]:
+                    wh_mi = agg[0] * 1000.0 / agg[1]
+    except sqlite3.Error:
+        app.logger.exception("nav car state failed")
+    return car, (round(wh_mi) if wh_mi else 380)
+
+
+def _saved_places_cached():
+    import time as _time
+    import nav
+    if _time.time() - _saved_cache["ts"] < 300 and _saved_cache["places"]:
+        return _saved_cache["places"], True
+    try:
+        places = nav.saved_places()
+        _saved_cache.update(ts=_time.time(), places=places)
+        return places, True
+    except Exception:
+        app.logger.exception("saved places fetch failed")
+        return _saved_cache["places"], False
+
+
+def _home_place(places):
+    for p in places:
+        if p.get("type") == "FAVORITE_HOME":
+            return p
+    try:
+        from config import HOME_LAT, HOME_LON
+        if HOME_LAT == HOME_LAT and HOME_LON == HOME_LON:  # not NaN
+            return {"name": "Home", "address": "", "lat": HOME_LAT,
+                    "lon": HOME_LON, "place_id": None, "type": "HOME",
+                    "url": None}
+    except Exception:
+        pass
+    return None
+
+
+def _clean_place(data):
+    """Validate a place dict from the dashboard. Returns (place, error)."""
+    if not isinstance(data, dict):
+        return None, "Missing place"
+    url = data.get("url")
+    if url:
+        host = ""
+        if isinstance(url, str):
+            from urllib.parse import urlparse
+            host = (urlparse(url).hostname or "").lower()
+        if not (isinstance(url, str) and url.startswith("https://")
+                and (host in ("telenav.id", "goo.gl", "maps.app.goo.gl")
+                     or host == "google.com"
+                     or host.endswith(".google.com"))):
+            return None, "That link is not a map link"
+        return {"name": (str(data.get("name") or "Map link"))[:120],
+                "address": "", "lat": None, "lon": None,
+                "place_id": None, "type": "", "url": url}, None
+    try:
+        lat = float(data.get("lat"))
+        lon = float(data.get("lon"))
+    except (TypeError, ValueError):
+        return None, "That place has no coordinates"
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return None, "That place has no coordinates"
+    pid = data.get("place_id")
+    return {"name": (str(data.get("name") or "Destination"))[:120],
+            "address": (str(data.get("address") or ""))[:240],
+            "lat": lat, "lon": lon,
+            "place_id": str(pid)[:80] if pid else None,
+            "type": str(data.get("type") or ""), "url": None}, None
+
+
+@app.route("/api/nav/state")
+def nav_state():
+    import nav
+    car, wh_mi = _car_state()
+    places, fresh = _saved_places_cached()
+    out = []
+    for p in places:
+        q = dict(p)
+        if car.get("lat") is not None and p.get("lat") is not None:
+            q["distance_mi"] = round(
+                nav.haversine_mi(car["lat"], car["lon"], p["lat"], p["lon"]), 1)
+        out.append(q)
+    return jsonify({"ok": True, "car": car, "wh_mi": wh_mi,
+                    "usable_kwh": USABLE_KWH,
+                    "places": out, "places_fresh": fresh})
+
+
+@app.route("/api/nav/search")
+def nav_search():
+    import nav
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 3:
+        return jsonify({"ok": True, "results": []})
+    car, _wh = _car_state()
+    try:
+        results = nav.search_places(q, car.get("lat"), car.get("lon"))
+    except Exception:
+        app.logger.exception("place search failed")
+        return jsonify({"ok": False, "error": "Search failed. Try again."}), 502
+    for r in results:
+        if car.get("lat") is not None:
+            r["distance_mi"] = round(
+                nav.haversine_mi(car["lat"], car["lon"], r["lat"], r["lon"]), 1)
+    results.sort(key=lambda r: r.get("distance_mi", 1e9))
+    return jsonify({"ok": True, "results": results})
+
+
+def _nav_post_guard():
+    """POST guard: the body must be real JSON sent by our own page. A
+    cross-site form post needs no CORS preflight, so without this any
+    web page could make the browser POST a send to the dashboard."""
+    if not request.is_json:
+        return jsonify({"ok": False,
+                        "error": "Expected a JSON request"}), 400
+    origin = request.headers.get("Origin")
+    if origin:
+        from urllib.parse import urlparse
+        if urlparse(origin).netloc != request.host:
+            return jsonify({"ok": False,
+                            "error": "Cross-origin request refused"}), 403
+    return None
+
+
+@app.route("/api/nav/plan", methods=["POST"])
+def nav_plan():
+    import nav
+    guard = _nav_post_guard()
+    if guard:
+        return guard
+    data = request.get_json(silent=True) or {}
+    place, err = _clean_place(data.get("place"))
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    if place.get("lat") is None:
+        return jsonify({"ok": False,
+                        "error": "Planning needs a place, not a link"}), 400
+    car, _wh = _car_state()
+    if car.get("lat") is None or car.get("soc") is None:
+        return jsonify({"ok": False, "error": "No recent car data"}), 503
+    places, _fresh = _saved_places_cached()
+    home = _home_place(places)
+    round_trip = bool(data.get("round_trip"))
+    if round_trip and home is None:
+        return jsonify({"ok": False, "error": "A round trip needs a Home"
+                        " place: save Home in the Rivian app, or set home"
+                        " coordinates in .env."}), 400
+    try:
+        result = nav.plan(place, round_trip, home,
+                          {"lat": car["lat"], "lon": car["lon"]}, car["soc"])
+    except Exception:
+        app.logger.exception("trip plan failed")
+        return jsonify({"ok": False,
+                        "error": "Rivian's planner did not answer."}), 502
+    return jsonify(result)
+
+
+@app.route("/api/nav/send", methods=["POST"])
+def nav_send():
+    import nav
+    guard = _nav_post_guard()
+    if guard:
+        return guard
+    data = request.get_json(silent=True) or {}
+    place, err = _clean_place(data.get("place"))
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    round_trip = bool(data.get("round_trip"))
+    # A round trip only exists in trip mode. A direct share is one-way
+    # by construction and must not silently drop the return leg.
+    mode = "trip" if (data.get("mode") == "trip" or round_trip) else "direct"
+    if mode == "trip" and place.get("lat") is None:
+        return jsonify({"ok": False,
+                        "error": "Trips need a place, not a link"}), 400
+    car, _wh = _car_state()
+    if car.get("lat") is None:
+        return jsonify({"ok": False, "error": "No recent car data"}), 503
+    places, _fresh = _saved_places_cached()
+    home = _home_place(places)
+    if round_trip and home is None:
+        return jsonify({"ok": False, "error": "A round trip needs a Home"
+                        " place: save Home in the Rivian app, or set home"
+                        " coordinates in .env."}), 400
+    if nav.send_in_progress():
+        return jsonify({"ok": False, "error": "A send is already in"
+                        " progress. Wait for the car to confirm it."}), 409
+    job_id = nav.start_send_job(place, mode, round_trip,
+                                home, {"lat": car["lat"], "lon": car["lon"]})
+    return jsonify({"ok": True, "job_id": job_id})
+
+
+@app.route("/api/nav/status")
+def nav_status():
+    import nav
+    job = nav.job_status(request.args.get("job") or "")
+    if job is None:
+        return jsonify({"ok": False, "error": "Unknown job"}), 404
+    return jsonify({"ok": True, "job": job})
+
+
+@app.route("/api/nav/map")
+def nav_map():
+    try:
+        lat = float(request.args.get("lat"))
+        lon = float(request.args.get("lon"))
+    except (TypeError, ValueError):
+        return "Bad coordinates", 400
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return "Bad coordinates", 400
+    try:
+        import report
+        img = report._render_point_map(lat, lon)
+    except Exception:
+        app.logger.exception("nav map render failed")
+        img = None
+    if img is None:
+        return "Map unavailable", 404
+    response = Response(img, mimetype="image/jpeg")
+    response.headers["Cache-Control"] = "private, max-age=86400"
+    return response
 
 
 if __name__ == "__main__":

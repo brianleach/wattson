@@ -207,7 +207,10 @@ it forward: keep it open, keep it fun.
 Map tiles by [Esri](https://www.esri.com) (World Dark Gray
 Canvas). Rivian API access via the
 [rivian-python-client](https://pypi.org/project/rivian-python-client/)
-library (MIT).
+library (MIT). The send-destination protocol was reverse
+engineered by
+[walthowd/rivian-gen2-key-poc](https://github.com/walthowd/rivian-gen2-key-poc)
+(MIT); nav.py's header carries the details.
 
 ## License
 

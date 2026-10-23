@@ -38,6 +38,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   policy.
 
 ### Fixed
+- Send confirmation checked only that a route report named a
+  destination the baseline did not have, never that the new
+  destination was the place that was sent, so an unrelated
+  route change during the confirmation window could confirm a
+  send. New destinations now have to match the sent place, and
+  a round trip with no captured baseline also requires the
+  route to include the trip home.
+- Direct sends no longer fail when the tracker has no recent
+  car position, and no longer fetch the saved places they
+  never use. Only trip sends need the car's position and a
+  Home place.
+- The session-token rehydration in nav.py assembles the
+  attribute name indirectly no longer; it assigns it directly,
+  like the rest of the codebase. The unused send_in_progress
+  helper is removed.
+- The inline-style guard now matches attributes
+  case-insensitively, resolves constant interpolations of the
+  attribute name, and resolves module-level variables in
+  split strings; regression tests cover all three.
 - If the API service restarted while a send was being
   confirmed, the dashboard polled a job the new process no
   longer knew and waited forever. It now reports that it

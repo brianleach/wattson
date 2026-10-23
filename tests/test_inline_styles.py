@@ -17,7 +17,8 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-STYLE_ATTR = re.compile(r"""style\s*=\s*"([^"]*)"|style\s*=\s*'([^']*)'""")
+STYLE_ATTR = re.compile(r"""style\s*=\s*"([^"]*)"|style\s*=\s*'([^']*)'""",
+                        re.IGNORECASE)
 
 
 def _check_value(value):
@@ -41,9 +42,34 @@ def _scan(text):
 
 
 def _joined(node):
-    return "".join(
-        part.value if isinstance(part, ast.Constant) else "\x01"
-        for part in node.values)
+    parts = []
+    for part in node.values:
+        if isinstance(part, ast.Constant):
+            parts.append(part.value)
+        elif isinstance(part, ast.FormattedValue) \
+                and isinstance(part.value, ast.Constant) \
+                and isinstance(part.value.value, str):
+            # A constant interpolated into the template is known
+            # text (f'<div {"style"}="...">'), not a placeholder.
+            parts.append(part.value.value)
+        else:
+            parts.append("\x01")
+    return "".join(parts)
+
+
+def _module_strings(tree):
+    """Module-level name = 'literal' assignments, so a string
+    built as prefix + '...' with prefix defined in the module is
+    still reconstructed whole."""
+    out = {}
+    for node in getattr(tree, "body", []):
+        if isinstance(node, ast.Assign) \
+                and len(node.targets) == 1 \
+                and isinstance(node.targets[0], ast.Name) \
+                and isinstance(node.value, ast.Constant) \
+                and isinstance(node.value.value, str):
+            out[node.targets[0].id] = node.value.value
+    return out
 
 
 def _iter_strings(tree):
@@ -70,6 +96,9 @@ def _iter_strings(tree):
                     parts.append(cur.value)
                 elif isinstance(cur, ast.JoinedStr):
                     parts.append(_joined(cur))
+                elif isinstance(cur, ast.Name) \
+                        and cur.id in _module_strings(tree):
+                    parts.append(_module_strings(tree)[cur.id])
                 else:
                     ok = False
                     break
@@ -114,6 +143,16 @@ class GuardEvasionTests(unittest.TestCase):
 
     def test_single_quotes_caught(self):
         self.assertCaught('x = "<div style=\'color:red\'>"')
+
+    def test_attribute_case_caught(self):
+        self.assertCaught('x = \'<div Style="color:red"></div>\'')
+
+    def test_interpolated_attribute_name_caught(self):
+        self.assertCaught('x = f\'<div {"style"}="color:red"></div>\'')
+
+    def test_variable_split_caught(self):
+        self.assertCaught(
+            'prefix = \'<div style="\'\nx = prefix + \'color:red">\'')
 
     def test_custom_property_still_allowed(self):
         for text in _iter_strings(

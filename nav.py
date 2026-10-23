@@ -90,9 +90,8 @@ async def _open_client():
     client = Rivian(session=session)
     await client.create_csrf_token()
     # Rehydrate the persisted user session onto the fresh app session
-    # (same approach as riv._fetch; written indirectly on purpose).
-    _key = "".join(["user", "_session", "_token"])
-    setattr(client, "_" + _key, tokens[_key])
+    # (same approach as riv._fetch).
+    client._user_session_token = tokens["user_session_token"]
     client._nav_session = session  # ours to close in _close(); see below
     return client, tokens
 
@@ -474,11 +473,31 @@ class _Confirmer:
     the state the user asked for.
     """
 
-    def __init__(self, baseline: dict | None, want: str):
+    def __init__(self, baseline: dict | None, want: str,
+                 home: str = ""):
         self._want = want
+        self._home = home
         self._have_baseline = baseline is not None
         self._names = _names(baseline)
         self._plan = _route_fingerprint(baseline)
+
+    @staticmethod
+    def _name_match(a: str, b: str) -> bool:
+        return bool(a and b and (a in b or b in a))
+
+    def _matches(self, name: str) -> bool:
+        return self._name_match(self._want, name)
+
+    def _matches_any(self, names) -> bool:
+        return any(self._matches(n) for n in names if n)
+
+    def _home_ok(self, names) -> bool:
+        # A round trip counts as confirmed only by a route that
+        # also brings the car home. Without a baseline, a
+        # pre-existing one-way route to the sent place would
+        # otherwise pass for the round trip that was sent.
+        return not self._home or any(
+            self._name_match(self._home, n) for n in names if n)
 
     def check(self, raw: bytes) -> bool:
         route = parse_trip_info(raw)
@@ -486,14 +505,18 @@ class _Confirmer:
             return False
         names = _names(route)
         if not self._have_baseline:
-            if self._want and any(self._want in n or n in self._want
-                                  for n in names if n):
+            if self._matches_any(names) and self._home_ok(names):
                 return True
             self._names = names
             self._plan = _route_fingerprint(route)
             self._have_baseline = True
             return False
-        if names - self._names:
+        # A destination that was not in the baseline confirms
+        # only when it is the place that was sent. Any other
+        # transition (the driver picked somewhere else, a
+        # cloud-side waypoint change) is not our send landing.
+        new = names - self._names
+        if new and any(self._matches(n) for n in new):
             return True
         # Same destination as the baseline counts only when the
         # plan itself changed (see _route_fingerprint) and the
@@ -503,8 +526,7 @@ class _Confirmer:
         # is safer than a false positive.
         return bool(self._want and
                     _route_fingerprint(route) != self._plan and
-                    any(self._want in n or n in self._want
-                        for n in names if n))
+                    self._matches_any(names))
 
 
 async def _send_and_confirm_async(place, mode, round_trip, home, origin):
@@ -525,7 +547,9 @@ async def _send_and_confirm_async(place, mode, round_trip, home, origin):
             await watch.wait_for(lambda r: True, 10)
             baseline = parse_trip_info(watch.route) if watch.route else None
             confirmer = _Confirmer(
-                baseline, (place.get("name") or "").strip().lower())
+                baseline, (place.get("name") or "").strip().lower(),
+                (home.get("name") or "").strip().lower()
+                if round_trip and home else "")
 
             stops = [place] + ([home] if round_trip and home else [])
             for attempt in (1, 2):
@@ -607,13 +631,6 @@ def start_send_job(place: dict, mode: str, round_trip: bool,
 
     threading.Thread(target=run, daemon=True).start()
     return job_id
-
-
-def send_in_progress() -> bool:
-    """True while any send job is still waiting on the car."""
-    with _JOBS_LOCK:
-        _reap_stale_locked()
-        return any(j.get("state") == "sending" for j in _JOBS.values())
 
 
 def job_status(job_id: str) -> dict | None:

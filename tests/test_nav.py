@@ -112,6 +112,22 @@ class NavGateTests(unittest.TestCase):
         self.assertEqual(start.call_args.args[1], "trip")
         self.assertTrue(start.call_args.args[2])
 
+    def test_direct_send_needs_no_car_position_or_places(self):
+        self.patch_all(SECRET)
+        with mock.patch("api._saved_places_cached") as places, \
+                mock.patch("nav.start_send_job",
+                           return_value="job9") as start:
+            r = self.client.post(
+                "/api/nav/send",
+                json={"place": {"name": "B", "lat": 34.1,
+                                "lon": -118.1},
+                      "mode": "direct"},
+                headers=AUTH)
+        self.assertEqual(r.status_code, 200)
+        places.assert_not_called()
+        self.assertEqual(start.call_args.args[1], "direct")
+        self.assertIsNone(start.call_args.args[3])
+
     def test_round_trip_without_home_is_a_clear_400(self):
         self.patch_all(SECRET)
         self._seed_car_row()
@@ -229,11 +245,6 @@ class NavUnitTests(unittest.TestCase):
         route = {"destinations": [{"name": " Alpha "}, {"name": "BETA"}]}
         self.assertEqual(nav._names(route), {"alpha", "beta"})
         self.assertEqual(nav._names(None), set())
-
-    def test_send_in_progress(self):
-        self.assertFalse(nav.send_in_progress())
-        with mock.patch.dict(nav._JOBS, {"x": {"state": "sending"}}):
-            self.assertTrue(nav.send_in_progress())
 
     def test_start_send_job_refuses_a_second_send(self):
         with mock.patch.dict(nav._JOBS, {"x": {"state": "sending"}}):
@@ -380,7 +391,27 @@ class ConfirmerTests(unittest.TestCase):
     def test_no_baseline_other_route_becomes_the_baseline(self):
         c = nav._Confirmer(None, "moon house")
         self.assertFalse(c.check(self.route("Irvine Spectrum")))
+        # A second, unrelated transition is not the send landing.
+        self.assertFalse(c.check(self.route("Newport Beach")))
         self.assertTrue(c.check(self.route("Moon House")))
+
+    def test_baseline_unrelated_transition_does_not_confirm(self):
+        c = nav._Confirmer(self.route("Home"), "moon house")
+        self.assertFalse(c.check(self.route("Newport Beach")))
+        self.assertTrue(c.check(self.route("Moon House")))
+
+    def test_round_trip_needs_the_home_leg_without_baseline(self):
+        both = {"destinations": [
+            {"name": "Moon House", "lat": 34.0, "lon": -118.0,
+             "place_id": None},
+            {"name": "Home", "lat": 34.1, "lon": -118.1,
+             "place_id": None}], "chargers": []}
+        c = nav._Confirmer(None, "moon house", home="home")
+        self.assertTrue(c.check(both))
+        c = nav._Confirmer(None, "moon house", home="home")
+        # A pre-existing one-way route is not the round trip.
+        self.assertFalse(c.check(self.route("Moon House")))
+        self.assertTrue(c.check(both))
 
     def test_no_baseline_sent_place_confirms(self):
         c = nav._Confirmer(None, "moon house")

@@ -437,16 +437,22 @@ def nav_send():
         return jsonify({"ok": False,
                         "error": "Trips need a place, not a link"}), 400
     car, _wh = _car_state()
-    if car.get("lat") is None:
-        return jsonify({"ok": False, "error": "No recent car data"}), 503
-    places, _fresh = _saved_places_cached()
-    home = _home_place(places)
-    if round_trip and home is None:
-        return jsonify({"ok": False, "error": "A round trip needs a Home"
-                        " place: save Home in the Rivian app, or set home"
-                        " coordinates in .env."}), 400
+    home = None
+    if mode == "trip":
+        # Only trip sends use the car's position (route origin)
+        # and a Home place (the return leg). A direct share needs
+        # neither, and must not fail or burn a Rivian call on them.
+        if car.get("lat") is None:
+            return jsonify({"ok": False,
+                            "error": "No recent car data"}), 503
+        places, _fresh = _saved_places_cached()
+        home = _home_place(places)
+        if round_trip and home is None:
+            return jsonify({"ok": False, "error": "A round trip needs a"
+                            " Home place: save Home in the Rivian app,"
+                            " or set home coordinates in .env."}), 400
     job_id = nav.start_send_job(place, mode, round_trip,
-                                home, {"lat": car["lat"], "lon": car["lon"]})
+                                home, {"lat": car.get("lat"), "lon": car.get("lon")})
     if job_id is None:
         return jsonify({"ok": False, "error": "A send is already in"
                         " progress. Wait for the car to confirm it."}), 409

@@ -5,14 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-### Changed
-- The public demo now shows the Send destination button. The
-  demo has no server behind it, so the modal opens with demo
-  notes where live places and search results would be, instead
-  of hiding the feature.
-
-
 ## [0.9.0] - 2026-10-22
 ### Added
 - Send destination: a hero action sends a place to the car's
@@ -44,6 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inline styles creeping back. Place search now runs when you
   press Enter instead of as you type, per Nominatim's usage
   policy.
+- The public demo shows the Send destination button. The demo
+  has no server behind it, so the modal opens with demo notes
+  where live places and search results would be, instead of
+  hiding the feature.
 
 ### Fixed
 - Send confirmation checked only that a route report named a

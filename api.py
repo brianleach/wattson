@@ -18,6 +18,8 @@ import math
 import time
 
 from config import DB_PATH, USABLE_KWH
+from db import (apply_charge_price, charge_price_info,
+                reassign_charge_price)
 from dashboard_auth import (SESSION_COOKIE, DashboardAuth, client_ip, is_https,
                             token_from_env)
 
@@ -70,14 +72,21 @@ def export_charges():
         with closing(sqlite3.connect(
                 DB_PATH.resolve().as_uri() + "?mode=ro",
                 uri=True, timeout=30)) as con:
-            for row in con.execute(
+            rows = con.execute(
                     "SELECT start_ts, end_ts, charge_type, label, minutes,"
-                    " kwh_added, miles_added, avg_kw, soc_start, soc_end,"
-                    " user_cost_per_kwh FROM charges ORDER BY start_ts"):
+                    " kwh_added, miles_added, avg_kw, soc_start, soc_end"
+                    " FROM charges ORDER BY start_ts").fetchall()
+            # Prices resolve through the same helper as the dashboard,
+            # so the export can never disagree with it (and a price on
+            # an ambiguous start is withheld here too).
+            prices, _, _ = charge_price_info(
+                con, [r[0] for r in rows])
+            for row in rows:
                 writer.writerow([
                     datetime.fromtimestamp(ts, timezone.utc).isoformat()
                     for ts in row[:2]
-                ] + [_csv_cell(value) for value in row[2:]])
+                ] + [_csv_cell(value) for value in row[2:]]
+                  + [_csv_cell(prices.get(row[0]))])
     except sqlite3.Error:
         app.logger.exception("Charging CSV export failed")
         return _err_page("Charging history is unavailable. Please try again.",
@@ -91,13 +100,13 @@ def export_charges():
 
 @app.route("/api/charge-cost-form", methods=["POST"])
 def set_charge_cost_form():
-    charge_id = request.form.get("charge_id")
+    # charge_id is accepted for old cached dashboards but never used
+    # for identity: numeric ids are reassigned on every re-derive, and
+    # trusting one is how a stale dashboard used to price the wrong
+    # session. start_ts is the only key.
+    request.form.get("charge_id")
     start_ts = request.form.get("start_ts")
     raw_cost = request.form.get("cost_per_kwh")
-    try:
-        cid = int(charge_id)
-    except (ValueError, TypeError):
-        return _err_page("Invalid charge id.", 400)
     # Empty cost clears a previously entered rate (back to unpriced).
     if raw_cost is None or str(raw_cost).strip() == "":
         cost = None
@@ -110,33 +119,80 @@ def set_charge_cost_form():
         if math.isnan(cost) or math.isinf(cost) or not (0.0 <= cost <= 10.0):
             return _err_page("Enter a price between 0 and 10 $/kWh.", 400)
     try:
+        sts = int(start_ts)
+    except (ValueError, TypeError):
+        return _err_page("Invalid charging session.", 400)
+    try:
         with sqlite3.connect(str(DB_PATH), timeout=30) as con:
-            cur = con.execute(
-                "UPDATE charges SET user_cost_per_kwh = ? WHERE id = ?",
-                (cost, cid))
-            if cur.rowcount == 0 and start_ts:
-                # The dashboard HTML may predate a background re-derive,
-                # which reassigns charge IDs. Fall back to the session's
-                # start timestamp, which is stable across re-derives.
-                try:
-                    sts = int(start_ts)
-                except (ValueError, TypeError):
-                    sts = None
-                if sts is not None:
-                    cur = con.execute(
-                        "UPDATE charges SET user_cost_per_kwh = ?"
-                        " WHERE start_ts = ?",
-                        (cost, sts))
-            if cur.rowcount == 0:
-                return _err_page("Charge not found. The charging log may have"
-                                 " refreshed; please reload the page and try"
-                                 " again.", 404)
+            # Hold the write lock across the check-and-write so a
+            # concurrent rebuild cannot delete the session between
+            # the existence check and the upsert.
+            con.execute("BEGIN IMMEDIATE")
+            status = apply_charge_price(con, sts, cost)
+            if status == "not_found":
+                return _err_page("That charging session is no longer in "
+                                 "the log. Please refresh the dashboard "
+                                 "and try again.", 404)
+            if status == "ambiguous":
+                return _err_page("Several sessions share that start time, "
+                                 "so the price was not applied to any of "
+                                 "them. Please refresh and try again.", 409)
             con.commit()
     except sqlite3.OperationalError as e:
         app.logger.error("DB error: %s", e)
         return _err_page("Database is busy. Please try again in a moment.",
                          503)
     # Regenerate the dashboard so the new cost shows immediately.
+    try:
+        import report
+        report.generate()
+    except Exception:
+        app.logger.exception("Dashboard regeneration failed")
+    return redirect("/#charging", code=303)
+
+
+@app.route("/api/charge-price-reassign", methods=["POST"])
+def reassign_charge_price_form():
+    """Move a saved price from an orphaned start time onto the correct
+    session, or remove the orphan. Both endpoints are validated
+    exactly; nothing is matched by guesswork."""
+    def _as_int(value):
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return None
+    from_ts = _as_int(request.form.get("orphan_start_ts"))
+    action = request.form.get("action")
+    to_ts = _as_int(request.form.get("target_start_ts"))
+    if from_ts is None or action not in ("move", "remove"):
+        return _err_page("Invalid reassignment request.", 400)
+    if action == "move" and to_ts is None:
+        return _err_page("Choose a session to move the price to.", 400)
+    try:
+        with sqlite3.connect(str(DB_PATH), timeout=30) as con:
+            con.execute("BEGIN IMMEDIATE")
+            status = reassign_charge_price(con, from_ts, to_ts, action)
+            if status == "orphan_not_found":
+                return _err_page("That saved price is no longer there. "
+                                 "Please refresh the dashboard and try "
+                                 "again.", 404)
+            if status == "target_not_found":
+                return _err_page("That session is no longer in the log. "
+                                 "Please refresh and try again.", 404)
+            if status == "target_ambiguous":
+                return _err_page("Several sessions share that start time, "
+                                 "so the price was not moved.", 409)
+            if status == "target_priced":
+                return _err_page("That session already has a price. Clear "
+                                 "it first, then move this one.", 409)
+            if status == "same_session":
+                return _err_page("That is already the session holding this "
+                                 "price.", 400)
+            con.commit()
+    except sqlite3.OperationalError as e:
+        app.logger.error("DB error: %s", e)
+        return _err_page("Database is busy. Please try again in a moment.",
+                         503)
     try:
         import report
         report.generate()

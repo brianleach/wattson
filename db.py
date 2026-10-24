@@ -1,5 +1,6 @@
 """SQLite storage for snapshots, trips, and idle-drain events."""
 import sqlite3
+import time
 from contextlib import contextmanager
 
 from config import DB_PATH
@@ -126,6 +127,25 @@ CREATE TABLE IF NOT EXISTS weather_cache(
     temp_f REAL,
     PRIMARY KEY (day, hour, lat_r, lon_r)
 );
+
+-- Manually entered charging prices, kept apart from the derived charges
+-- table on purpose: rebuilds delete and recreate charge sessions (their
+-- numeric ids are unstable), so a price stored on the session row would
+-- be lost whenever a session's start moves or the session disappears.
+-- Annotations are keyed by start_ts; clearing a price deletes its row,
+-- so 0.00 stays unambiguously a price and never a missing value.
+CREATE TABLE IF NOT EXISTS charge_prices(
+    start_ts INTEGER PRIMARY KEY,
+    user_cost_per_kwh REAL NOT NULL,
+    updated_ts INTEGER NOT NULL
+);
+
+-- One-row-per-migration markers, so one-time migrations run exactly
+-- once even across restarts.
+CREATE TABLE IF NOT EXISTS meta(
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 
@@ -185,6 +205,123 @@ def init():
                        con.execute("PRAGMA table_info(charges)").fetchall()}
         if "user_cost_per_kwh" not in charge_cols:
             con.execute("ALTER TABLE charges ADD COLUMN user_cost_per_kwh REAL")
+        # One-time backfill of manually entered charging prices into the
+        # annotation table. The marker row commits in the same
+        # transaction as the copied rows, so a crash or restart can
+        # neither half-apply the backfill nor run it twice: a later
+        # clear (which deletes the annotation row) is never resurrected,
+        # because this block never runs again once the marker is set.
+        marker = con.execute(
+            "SELECT value FROM meta WHERE key = 'charge_prices_backfill'"
+        ).fetchone()
+        if marker is None or marker[0] != "1":
+            con.execute(
+                "INSERT OR IGNORE INTO charge_prices"
+                " (start_ts, user_cost_per_kwh, updated_ts)"
+                " SELECT start_ts, user_cost_per_kwh, ? FROM charges"
+                " WHERE user_cost_per_kwh IS NOT NULL ORDER BY id",
+                (int(time.time()),))
+            con.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES"
+                " ('charge_prices_backfill', '1')")
+
+
+def charge_price_info(con, starts):
+    """Resolve charging-price annotations for a set of session starts.
+
+    Returns (prices, orphans, ambiguous):
+    - prices: {start_ts: cost} for starts identifying exactly one
+      session. This is the single resolution point shared by the
+      dashboard, the savings totals, and the CSV export, so they
+      can never disagree.
+    - orphans: [(start_ts, cost)] annotations with no current session.
+    - ambiguous: {start_ts} starts shared by 2+ sessions. Their price
+      is withheld from every display and total, so one price can never
+      be applied to multiple sessions or double-counted.
+    """
+    from collections import Counter
+    counts = Counter(starts)
+    ambiguous = {s for s, c in counts.items() if c > 1}
+    prices, orphans = {}, []
+    startset = set(starts)
+    for s, cost in con.execute(
+            "SELECT start_ts, user_cost_per_kwh FROM charge_prices"):
+        if s not in startset:
+            orphans.append((s, cost))
+        elif s not in ambiguous:
+            prices[s] = cost
+    return prices, orphans, ambiguous
+
+
+def apply_charge_price(con, start_ts, cost):
+    """Apply (or clear, when cost is None) a price for one session.
+
+    Identity is start_ts only. The numeric charge id is unstable
+    across re-derives and is never trusted, not even as a first
+    lookup. Returns "ok", "not_found", or "ambiguous". The caller
+    owns commit/rollback.
+    """
+    n = con.execute(
+        "SELECT COUNT(*) FROM charges WHERE start_ts = ?",
+        (start_ts,)).fetchone()[0]
+    if n == 0:
+        return "not_found"
+    if n > 1:
+        return "ambiguous"
+    if cost is None:
+        con.execute("DELETE FROM charge_prices WHERE start_ts = ?",
+                    (start_ts,))
+    else:
+        con.execute(
+            "INSERT INTO charge_prices (start_ts, user_cost_per_kwh,"
+            " updated_ts) VALUES (?, ?, ?)"
+            " ON CONFLICT(start_ts) DO UPDATE SET"
+            " user_cost_per_kwh = excluded.user_cost_per_kwh,"
+            " updated_ts = excluded.updated_ts",
+            (start_ts, cost, int(time.time())))
+    return "ok"
+
+
+def reassign_charge_price(con, from_ts, to_ts, action):
+    """Move or remove an orphaned annotation. Returns a status string:
+    "ok", "orphan_not_found", "target_not_found", "target_ambiguous",
+    "target_priced", "same_session", or "bad_action".
+
+    Nothing is matched by guesswork: both endpoints are validated
+    exactly, and a price is never moved onto a session that already
+    has one. The caller owns commit/rollback.
+    """
+    if action not in ("move", "remove"):
+        return "bad_action"
+    row = con.execute(
+        "SELECT user_cost_per_kwh FROM charge_prices WHERE start_ts = ?",
+        (from_ts,)).fetchone()
+    if row is None:
+        return "orphan_not_found"
+    if action == "remove":
+        con.execute("DELETE FROM charge_prices WHERE start_ts = ?",
+                    (from_ts,))
+        return "ok"
+    if from_ts == to_ts:
+        return "same_session"
+    n = con.execute(
+        "SELECT COUNT(*) FROM charges WHERE start_ts = ?",
+        (to_ts,)).fetchone()[0]
+    if n == 0:
+        return "target_not_found"
+    if n > 1:
+        return "target_ambiguous"
+    if con.execute(
+            "SELECT 1 FROM charge_prices WHERE start_ts = ?",
+            (to_ts,)).fetchone() is not None:
+        return "target_priced"
+    con.execute("DELETE FROM charge_prices WHERE start_ts = ?",
+                (from_ts,))
+    con.execute(
+        "INSERT INTO charge_prices (start_ts, user_cost_per_kwh,"
+        " updated_ts) VALUES (?, ?, ?)",
+        (to_ts, row[0], int(time.time())))
+    return "ok"
 
 
 def last_odometer():
@@ -256,15 +393,11 @@ def rebuild_derived(trips: list[dict], drains: list[dict],
                     errands: list[dict] | None = None) -> None:
     init()  # ensure schema + migrations before wiping derived tables
     with connect() as con:
-        # Preserve user-entered DC fast-charge costs across the re-derive:
-        # charges are deleted and re-inserted below, keyed by start_ts.
-        # This read must not fail silently: if it errors, the rebuild
-        # aborts and the transaction rolls back, leaving the old rows
-        # (and their costs) intact for a later retry. A fallback to {}
-        # would commit a cost-stripped rebuild instead.
-        _costs = {r[0]: r[1] for r in con.execute(
-            "SELECT start_ts, user_cost_per_kwh FROM charges "
-            "WHERE user_cost_per_kwh IS NOT NULL").fetchall()}
+        # Manually entered prices live in charge_prices, not on the
+        # derived rows, so this wipe-and-reinsert cannot lose them.
+        # The old start_ts-keyed preserve/restore is gone on purpose:
+        # it was the mechanism that dropped prices whenever a
+        # session's start moved or the session disappeared.
         con.execute("DELETE FROM trips")
         con.execute("DELETE FROM drains")
         con.execute("DELETE FROM charges")
@@ -312,11 +445,6 @@ def rebuild_derived(trips: list[dict], drains: list[dict],
               c.get("charge_type"), c.get("lat"), c.get("lon"),
               c.get("label")) for c in (charges or [])],
         )
-        # Restore preserved user costs onto the re-derived charges.
-        if _costs:
-            con.executemany(
-                "UPDATE charges SET user_cost_per_kwh = ? WHERE start_ts = ?",
-                [(v, k) for k, v in _costs.items()])
         con.executemany(
             "INSERT INTO errands (day, drives, miles, kwh_used)"
             " VALUES (?,?,?,?)",

@@ -37,7 +37,7 @@ from config import (HOME_LAT, HOME_LON,
                     VEHICLE_MODEL,
                     REPORT_PATH, TOKENS_PATH, LOCAL_TZ)
 from crypto import unseal
-from db import connect
+from db import charge_price_info, connect
 from dashboard_auth import token_from_env
 
 GREEN = "#7ed321"
@@ -1311,14 +1311,17 @@ def _charge_row_html(c: dict, scale: float, open_: bool,
 
 
 def _charges_html(charges: list[dict], live: dict | None = None,
-                  live_is_home: bool = False, eff: float = 3.0) -> str:
+                  live_is_home: bool = False, eff: float = 3.0,
+                  orphans=(), ambiguous=()) -> str:
     # The in-progress session is shown in the live card; keep it out of
     # the history list so it is not shown twice.
     hist = [ch for ch in charges
             if not (live and ch["end_ts"] >= live["session_start"])]
+    orphan_bit = _orphan_note_html(charges, orphans, ambiguous)
     if not hist and not live:
         return ('<div class="empty">No charging sessions yet.<br>Ping me when '
-                'you plug in and I will track the session.</div>')
+                'you plug in and I will track the session.</div>'
+                + orphan_bit)
     parts = []
     if live:
         parts.append(_live_charge_html(live, live_is_home))
@@ -1338,7 +1341,58 @@ def _charges_html(charges: list[dict], live: dict | None = None,
                 '(set RIVIAN_HOME_KWH_RATE in .env). Away sessions show no '
                 'cost; public rates vary. Tap "? add cost" on a DC fast '
                 'charge to record what you paid.</p>' % HOME_KWH_RATE)
-    return "".join(parts) + footnote
+    return "".join(parts) + orphan_bit + footnote
+
+
+def _orphan_note_html(charges, orphans, ambiguous) -> str:
+    """Orphan/ambiguity note plus the small reassign form, or "".
+
+    Kept separate so the note also renders when no sessions exist at
+    all (otherwise orphaned prices would be invisible exactly when
+    every session is gone).
+    """
+    if not orphans and not ambiguous:
+        return ""
+    lines = []
+    for ts, cost in orphans:
+        lines.append(f"{_day(ts)} &middot; ${cost:.2f}/kWh has no "
+                     f"matching session any more.")
+    for ts in sorted(ambiguous):
+        lines.append(f"{_day(ts)} is shared by several sessions, so "
+                     f"its saved price is held back from all of them.")
+    form = ""
+    if orphans:
+        # Move targets: sessions shown here with no price yet. The
+        # server revalidates everything, so this list is convenience
+        # only, never authority.
+        priced = {c["start_ts"] for c in charges
+                  if c.get("user_cost_per_kwh") is not None}
+        target_opts = "".join(
+            f'<option value="{c["start_ts"]}">'
+            f'{_day(c["start_ts"])} &middot; '
+            f'{_esc(c.get("label") or c.get("charge_type") or "")} '
+            f'&middot; {c.get("kwh_added") or 0:.1f} kWh</option>'
+            for c in charges
+            if c["start_ts"] not in priced
+            and c["start_ts"] not in ambiguous)
+        orphan_opts = "".join(
+            f'<option value="{ts}">{_day(ts)} &middot; '
+            f'${cost:.2f}/kWh</option>' for ts, cost in orphans)
+        move_bit = ""
+        if target_opts:
+            move_bit = (
+                f'<select name="target_start_ts">{target_opts}</select>'
+                '<button type="submit" name="action" value="move" '
+                'class="btn-primary">Move price</button>')
+        form = (
+            '<form method="POST" action="/api/charge-price-reassign" '
+            'class="m0">'
+            f'<select name="orphan_start_ts">{orphan_opts}</select>'
+            + move_bit +
+            '<button type="submit" name="action" value="remove" '
+            'class="btn-ghost">Remove orphan</button></form>')
+    return ('<div class="card"><p class="note">' +
+            "<br>".join(lines) + "</p>" + form + "</div>")
 
 
 def _fmt_money(v: float, decimals: int = 0) -> str:
@@ -1611,6 +1665,16 @@ def generate() -> None:
         # All charges for lifetime savings (no LIMIT: the log shows 20).
         all_charges = [dict(r) for r in con.execute(
             "SELECT * FROM charges ORDER BY start_ts DESC")]
+        # Prices resolve once, here, from the annotation table: the
+        # charge dicts below (rows, per-session savings, lifetime
+        # savings) all read the same key, and the CSV export resolves
+        # through the same helper, so no surface can disagree.
+        _prices, _orphans, _ambiguous = charge_price_info(
+            con, [c["start_ts"] for c in all_charges])
+        for _c in charges:
+            _c["user_cost_per_kwh"] = _prices.get(_c["start_ts"])
+        for _c in all_charges:
+            _c["user_cost_per_kwh"] = _prices.get(_c["start_ts"])
         agg = con.execute(
             "SELECT SUM(miles) m, SUM(kwh_used) k FROM trips").fetchone()
 
@@ -1988,7 +2052,8 @@ def generate() -> None:
     charging_section = (
         '<h2 class="sec" id="charging">Charging</h2>'
         + _charges_html(charges, live, live_is_home,
-                        eff=(lifetime_mpk if lifetime_mpk else 3.0)))
+                        eff=(lifetime_mpk if lifetime_mpk else 3.0),
+                        orphans=_orphans, ambiguous=_ambiguous))
     savings_section = (
         '<h2 class="sec" id="savings">Fuel savings vs gas</h2>'
         + savings_table

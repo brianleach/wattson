@@ -1,13 +1,12 @@
 """Transaction-integrity tests for db.connect() and db.rebuild_derived().
 
 Step 1 (Oct 2026): a failed block must never commit partial work, and
-a failed rebuild must leave the previous derived tables untouched,
-including manually entered charging prices.
+a failed rebuild must leave the previous derived tables untouched.
+Step 2: manually entered charging prices live in charge_prices, which
+rebuilds never read or write, so they survive every rebuild outcome.
 """
-import sqlite3
 import tempfile
 import unittest
-from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
@@ -76,6 +75,9 @@ class TransactionTests(unittest.TestCase):
                 " user_cost_per_kwh) VALUES (5, 6, 30, 20.0, 40.0, 10.0,"
                 " 30.0, 'DC', 0.5)")
             con.execute(
+                "INSERT INTO charge_prices (start_ts, user_cost_per_kwh,"
+                " updated_ts) VALUES (5, 0.5, 1700000000)")
+            con.execute(
                 "INSERT INTO errands (day, drives, miles, kwh_used)"
                 " VALUES ('2026-10-19', 1, 8.0, 2.0)")
 
@@ -110,50 +112,40 @@ class TransactionTests(unittest.TestCase):
                  ("trips", "drains", "charges", "errands")}
         self.assertEqual(after, before)
 
-    def test_cost_read_failure_aborts_rebuild(self):
+    def test_rebuild_leaves_annotations_untouched(self):
+        # Step 2 replaces the old cost-read test: rebuilds never read
+        # or write the annotation table, so an annotation survives both
+        # a successful rebuild and a failed one.
         self.seed()
-        before = {t: self.rows(t) for t in
-                  ("trips", "drains", "charges", "errands")}
-
-        class FailingCosts:
-            def __init__(self, real):
-                self._real = real
-
-            def execute(self, sql, params=()):
-                if sql.strip().startswith(
-                        "SELECT start_ts, user_cost_per_kwh"):
-                    raise sqlite3.OperationalError(
-                        "injected cost-read failure")
-                return self._real.execute(sql, params)
-
-            def __getattr__(self, name):
-                return getattr(self._real, name)
-
-        real_connect = db.connect
-
-        @contextmanager
-        def failing_connect():
-            with real_connect() as con:
-                yield FailingCosts(con)
-
-        with mock.patch.object(db, "connect", failing_connect):
-            with self.assertRaises(sqlite3.OperationalError):
-                db.rebuild_derived([trip()], [drain()], [charge()],
-                                   [errand()])
-        after = {t: self.rows(t) for t in
-                 ("trips", "drains", "charges", "errands")}
-        self.assertEqual(after, before)
-
-    def test_successful_rebuild_preserves_manual_costs(self):
-        self.seed()
-        # The re-derived charge must share the seeded row's start_ts,
-        # which is the key the cost restore matches on.
         db.rebuild_derived([trip()], [drain()], [charge(start_ts=5)],
                            [errand()])
         with db.connect() as con:
-            costs = [r[0] for r in con.execute(
+            costs = [(r[0], r[1]) for r in con.execute(
+                "SELECT start_ts, user_cost_per_kwh FROM charge_prices")]
+        self.assertEqual(costs, [(5, 0.5)])
+        bad = charge()
+        del bad["miles_added"]
+        with self.assertRaises(KeyError):
+            db.rebuild_derived([trip()], [drain()], [bad], [errand()])
+        with db.connect() as con:
+            costs = [(r[0], r[1]) for r in con.execute(
+                "SELECT start_ts, user_cost_per_kwh FROM charge_prices")]
+        self.assertEqual(costs, [(5, 0.5)])
+
+    def test_successful_rebuild_preserves_manual_costs(self):
+        self.seed()
+        # The re-derived charge shares the seeded row's start_ts. The
+        # price now survives in the annotation table, not on the
+        # derived row (whose cost column rebuilds leave NULL).
+        db.rebuild_derived([trip()], [drain()], [charge(start_ts=5)],
+                           [errand()])
+        with db.connect() as con:
+            costs = [(r[0], r[1]) for r in con.execute(
+                "SELECT start_ts, user_cost_per_kwh FROM charge_prices")]
+            row_costs = [r[0] for r in con.execute(
                 "SELECT user_cost_per_kwh FROM charges")]
-        self.assertEqual(costs, [0.5])
+        self.assertEqual(costs, [(5, 0.5)])
+        self.assertEqual(row_costs, [None])
 
     def test_rebuild_twice_gives_same_tables(self):
         first = ([trip(), trip(100)], [drain()], [charge()],

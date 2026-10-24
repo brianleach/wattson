@@ -31,9 +31,14 @@ class SavingsCoverageTests(unittest.TestCase):
         with db.connect() as con:
             con.execute(
                 "INSERT INTO charges (start_ts, end_ts, minutes, soc_start,"
-                " soc_end, kwh_added, charge_type, user_cost_per_kwh, label)"
-                " VALUES (?, ?, 30, 20, 40, 10, ?, ?, ?)",
-                (timestamp, timestamp + 1800, charge_type, price, label))
+                " soc_end, kwh_added, charge_type, label)"
+                " VALUES (?, ?, 30, 20, 40, 10, ?, ?)",
+                (timestamp, timestamp + 1800, charge_type, label))
+            if price is not None:
+                con.execute(
+                    "INSERT INTO charge_prices (start_ts, user_cost_per_kwh,"
+                    " updated_ts) VALUES (?, ?, 1700000000)",
+                    (timestamp, price))
 
     def render(self):
         report.generate()

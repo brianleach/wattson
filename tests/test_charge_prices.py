@@ -157,9 +157,33 @@ class ChargePriceTests(unittest.TestCase):
             self.assertEqual(
                 db.reassign_charge_price(con, 999, 100, "move"),
                 "orphan_not_found")
+            # 100 is attached again after the move, so the orphan path
+            # must refuse to remove it; the still-orphaned 500 removes.
             self.assertEqual(
-                db.reassign_charge_price(con, 100, None, "remove"), "ok")
-        self.assertEqual(self.prices(), [(200, 0.5), (500, 0.7)])
+                db.reassign_charge_price(con, 100, None, "remove"),
+                "source_attached")
+            self.assertEqual(
+                db.reassign_charge_price(con, 500, None, "remove"), "ok")
+        self.assertEqual(self.prices(), [(100, 0.6), (200, 0.5)])
+
+    def test_reattached_orphan_refuses_stale_move_and_remove(self):
+        db.init()
+        self.seed_charge(100)  # unpriced target
+        with db.connect() as con:
+            con.execute(
+                "INSERT INTO charge_prices (start_ts, user_cost_per_kwh,"
+                " updated_ts) VALUES (300, 0.6, 1700000000)")  # orphan
+        # The session reappears (a later re-derive restores it), so the
+        # annotation is attached again before the stale form arrives.
+        self.seed_charge(300)
+        with db.connect() as con:
+            self.assertEqual(
+                db.reassign_charge_price(con, 300, 100, "move"),
+                "source_attached")
+            self.assertEqual(
+                db.reassign_charge_price(con, 300, None, "remove"),
+                "source_attached")
+        self.assertEqual(self.prices(), [(300, 0.6)])
 
     def test_annotation_survives_rebuild_despite_id_shift(self):
         db.init()
@@ -282,6 +306,24 @@ class ChargePriceEndpointTests(unittest.TestCase):
             "orphan_start_ts": "300", "action": "remove"})
         self.assertEqual(resp.status_code, 303)
         self.assertEqual(self.prices(), [])
+
+    def test_stale_reassign_forms_refused_once_orphan_reattaches(self):
+        # The orphaned session reappears before the stale form arrives.
+        with db.connect() as con:
+            con.execute(
+                "INSERT INTO charges (start_ts, end_ts, minutes, soc_start,"
+                " soc_end, kwh_added, miles_added, charge_type, label)"
+                " VALUES (300, 2100, 30, 20.0, 40.0, 10.0, 30.0, 'DC',"
+                " 'Test charger')")
+        resp = self.client.post("/api/charge-price-reassign", data={
+            "orphan_start_ts": "300", "target_start_ts": "100",
+            "action": "move"})
+        self.assertEqual(resp.status_code, 409)
+        self.assertIn("attached", resp.get_data(as_text=True).lower())
+        resp = self.client.post("/api/charge-price-reassign", data={
+            "orphan_start_ts": "300", "action": "remove"})
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(self.prices(), [(300, 0.6)])
 
 
 class OrphanDisplayTests(unittest.TestCase):

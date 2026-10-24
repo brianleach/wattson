@@ -284,12 +284,15 @@ def apply_charge_price(con, start_ts, cost):
 
 def reassign_charge_price(con, from_ts, to_ts, action):
     """Move or remove an orphaned annotation. Returns a status string:
-    "ok", "orphan_not_found", "target_not_found", "target_ambiguous",
-    "target_priced", "same_session", or "bad_action".
+    "ok", "orphan_not_found", "source_attached", "target_not_found",
+    "target_ambiguous", "target_priced", "same_session", or "bad_action".
 
     Nothing is matched by guesswork: both endpoints are validated
     exactly, and a price is never moved onto a session that already
-    has one. The caller owns commit/rollback.
+    has one. The source must still be orphaned (zero matching charge
+    rows): a stale form submitted after the session reappeared must
+    neither move nor delete the price that is attached again. The
+    caller owns commit/rollback.
     """
     if action not in ("move", "remove"):
         return "bad_action"
@@ -298,6 +301,10 @@ def reassign_charge_price(con, from_ts, to_ts, action):
         (from_ts,)).fetchone()
     if row is None:
         return "orphan_not_found"
+    if con.execute(
+            "SELECT COUNT(*) FROM charges WHERE start_ts = ?",
+            (from_ts,)).fetchone()[0] > 0:
+        return "source_attached"
     if action == "remove":
         con.execute("DELETE FROM charge_prices WHERE start_ts = ?",
                     (from_ts,))

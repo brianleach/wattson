@@ -176,6 +176,10 @@ def reassign_charge_price_form():
                 return _err_page("That saved price is no longer there. "
                                  "Please refresh the dashboard and try "
                                  "again.", 404)
+            if status == "source_attached":
+                return _err_page("That saved price is attached to a "
+                                 "session again. Please refresh the "
+                                 "dashboard and try again.", 409)
             if status == "target_not_found":
                 return _err_page("That session is no longer in the log. "
                                  "Please refresh and try again.", 404)

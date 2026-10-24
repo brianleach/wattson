@@ -12,6 +12,7 @@ import csv
 from contextlib import closing
 from datetime import datetime, timezone
 import io
+from urllib.parse import urlparse
 from flask import Flask, request, redirect, jsonify, Response
 import sqlite3
 import math
@@ -45,6 +46,58 @@ def _err_page(msg, code):
         f"<p>{msg}</p>"
         '<p><a href="/#charging" style="color:#7ed321">Back to dashboard</a></p>'
         "</body></html>", code)
+
+
+def _header_hostname(value):
+    """Lowercased hostname of a header value, or None."""
+    if not value:
+        return None
+    try:
+        host = urlparse(value).hostname
+    except ValueError:
+        return None
+    return host.lower() if host else None
+
+
+def _same_origin(request):
+    """CSRF origin check for browser form POSTs.
+
+    Accepts when the Origin header (falling back to Referer) names
+    the same host the request arrived on. Hostnames only, not schemes
+    or ports: behind nginx/Cloudflare the app sees the public host
+    (the production proxy forwards Host $host) but not necessarily
+    the public scheme, so the hostname is the reliable part. A remote
+    attacker's page always has a different hostname, so this blocks
+    cross-site form posts. A missing Origin and Referer fails closed:
+    legitimate dashboard forms always carry one.
+    """
+    host = _header_hostname("//" + (request.host or ""))
+    origin = _header_hostname(request.headers.get("Origin"))
+    if origin is None:
+        origin = _header_hostname(request.headers.get("Referer"))
+    if origin is None:
+        return False
+    return origin == host
+
+
+def _guard_charge_post():
+    """Auth + origin checks shared by the charging-price POST endpoints.
+
+    Returns an error response, or None when the request may proceed.
+    Auth follows the dashboard token: when no token is configured the
+    dashboard is local-only and authorized() passes everything, which
+    preserves that behavior. The origin check still applies without a
+    token, since a malicious site could otherwise POST to a local
+    dashboard from the visitor's browser.
+    """
+    if not _same_origin(request):
+        return _err_page("Could not verify this request came from the "
+                         "dashboard. Please submit from the dashboard "
+                         "page.", 403)
+    if not auth.authorized(request.headers.get("Authorization"),
+                           request.cookies.get(SESSION_COOKIE)):
+        return _err_page("Sign in to the dashboard first.", 401)
+    return None
 
 
 def _csv_cell(value):
@@ -100,6 +153,9 @@ def export_charges():
 
 @app.route("/api/charge-cost-form", methods=["POST"])
 def set_charge_cost_form():
+    guard = _guard_charge_post()
+    if guard is not None:
+        return guard
     # charge_id is accepted for old cached dashboards but never used
     # for identity: numeric ids are reassigned on every re-derive, and
     # trusting one is how a stale dashboard used to price the wrong
@@ -156,6 +212,9 @@ def reassign_charge_price_form():
     """Move a saved price from an orphaned start time onto the correct
     session, or remove the orphan. Both endpoints are validated
     exactly; nothing is matched by guesswork."""
+    guard = _guard_charge_post()
+    if guard is not None:
+        return guard
     def _as_int(value):
         try:
             return int(value)

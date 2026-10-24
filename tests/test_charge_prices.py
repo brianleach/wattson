@@ -282,7 +282,8 @@ class ChargePriceEndpointTests(unittest.TestCase):
 
     def test_stale_submit_returns_refresh_error_and_stores_nothing(self):
         resp = self.client.post("/api/charge-cost-form", data={
-            "charge_id": "7", "start_ts": "999", "cost_per_kwh": "0.5"})
+            "charge_id": "7", "start_ts": "999", "cost_per_kwh": "0.5"},
+            headers={"Origin": "http://localhost"})
         self.assertEqual(resp.status_code, 404)
         self.assertIn("refresh", resp.get_data(as_text=True).lower())
         self.assertEqual(self.prices(), [(300, 0.6)])
@@ -290,20 +291,22 @@ class ChargePriceEndpointTests(unittest.TestCase):
     def test_valid_submit_ignores_wrong_charge_id(self):
         # Session 100 has id 1; submit a wrong id with the right start.
         resp = self.client.post("/api/charge-cost-form", data={
-            "charge_id": "999", "start_ts": "100", "cost_per_kwh": "0.5"})
+            "charge_id": "999", "start_ts": "100", "cost_per_kwh": "0.5"},
+            headers={"Origin": "http://localhost"})
         self.assertEqual(resp.status_code, 303)
         self.assertEqual(self.prices(), [(100, 0.5), (300, 0.6)])
 
     def test_reassign_moves_orphan_via_endpoint(self):
         resp = self.client.post("/api/charge-price-reassign", data={
             "orphan_start_ts": "300", "target_start_ts": "100",
-            "action": "move"})
+            "action": "move"}, headers={"Origin": "http://localhost"})
         self.assertEqual(resp.status_code, 303)
         self.assertEqual(self.prices(), [(100, 0.6)])
 
     def test_reassign_remove_via_endpoint(self):
         resp = self.client.post("/api/charge-price-reassign", data={
-            "orphan_start_ts": "300", "action": "remove"})
+            "orphan_start_ts": "300", "action": "remove"},
+            headers={"Origin": "http://localhost"})
         self.assertEqual(resp.status_code, 303)
         self.assertEqual(self.prices(), [])
 
@@ -317,11 +320,12 @@ class ChargePriceEndpointTests(unittest.TestCase):
                 " 'Test charger')")
         resp = self.client.post("/api/charge-price-reassign", data={
             "orphan_start_ts": "300", "target_start_ts": "100",
-            "action": "move"})
+            "action": "move"}, headers={"Origin": "http://localhost"})
         self.assertEqual(resp.status_code, 409)
         self.assertIn("attached", resp.get_data(as_text=True).lower())
         resp = self.client.post("/api/charge-price-reassign", data={
-            "orphan_start_ts": "300", "action": "remove"})
+            "orphan_start_ts": "300", "action": "remove"},
+            headers={"Origin": "http://localhost"})
         self.assertEqual(resp.status_code, 409)
         self.assertEqual(self.prices(), [(300, 0.6)])
 

@@ -12,12 +12,14 @@ import csv
 from contextlib import closing
 from datetime import datetime, timezone
 import io
+import ipaddress
+from urllib.parse import urlparse
 from flask import Flask, request, redirect, jsonify, Response
 import sqlite3
 import math
 import time
 
-from config import DB_PATH, USABLE_KWH
+from config import DB_PATH, PUBLIC_ORIGIN, USABLE_KWH
 from db import (apply_charge_price, charge_price_info,
                 reassign_charge_price)
 from dashboard_auth import (SESSION_COOKIE, DashboardAuth, client_ip, is_https,
@@ -45,6 +47,135 @@ def _err_page(msg, code):
         f"<p>{msg}</p>"
         '<p><a href="/#charging" style="color:#7ed321">Back to dashboard</a></p>'
         "</body></html>", code)
+
+
+def _origin_triple(value):
+    """(scheme, hostname, port) of an Origin/Referer value, or None.
+
+    Ports default by scheme (443 for https, 80 for http). Anything
+    without an http(s) scheme and hostname, or with an unparseable
+    port, has no usable triple and can never match.
+    """
+    if not value:
+        return None
+    try:
+        parts = urlparse(value)
+        scheme = (parts.scheme or "").lower()
+        host = (parts.hostname or "").lower()
+        if scheme not in ("http", "https") or not host:
+            return None
+        port = parts.port
+    except ValueError:
+        return None
+    if port is None:
+        port = 443 if scheme == "https" else 80
+    return (scheme, host, port)
+
+
+_TRUSTED_PROXY_NETWORKS = (
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+)
+
+
+def _trusted_proxy(remote_addr):
+    """True when the immediate peer is loopback or a private network.
+
+    Only such peers may supply X-Forwarded-Proto: in production Flask
+    listens on loopback behind nginx, and in Docker the peer is the
+    bridge network. Anything else is an untrusted client whose
+    forwarding headers must be ignored, never honored.
+    """
+    if not remote_addr:
+        return False
+    try:
+        addr = ipaddress.ip_address(remote_addr)
+    except ValueError:
+        return False
+    return any(addr in net for net in _TRUSTED_PROXY_NETWORKS)
+
+
+def _expected_origin(request):
+    """(scheme, hostname, port) the request legitimately came from.
+
+    A configured canonical public origin wins outright: it does not
+    depend on proxy headers at all. Otherwise the scheme is the
+    forwarded proto, but only from a trusted proxy peer, falling back
+    to the request's own scheme; the host comes from the Host header,
+    which the production proxy forwards.
+    """
+    if PUBLIC_ORIGIN:
+        triple = _origin_triple(PUBLIC_ORIGIN)
+        if triple is None:
+            app.logger.error("WATTSON_PUBLIC_ORIGIN is set but invalid: %r",
+                             PUBLIC_ORIGIN)
+            return None
+        return triple
+    scheme = request.scheme
+    if _trusted_proxy(request.remote_addr):
+        forwarded = (request.headers.get("X-Forwarded-Proto") or "")
+        forwarded = forwarded.split(",")[0].strip().lower()
+        if forwarded in ("http", "https"):
+            scheme = forwarded
+    try:
+        host_parts = urlparse("//" + (request.host or ""))
+        host = (host_parts.hostname or "").lower()
+        port = host_parts.port
+    except ValueError:
+        return None
+    if not host:
+        return None
+    if port is None:
+        port = 443 if scheme == "https" else 80
+    return (scheme, host, port)
+
+
+def _same_origin(request):
+    """CSRF origin check for browser form POSTs.
+
+    Compares the full origin triple (scheme, hostname, port): same
+    hostname is not same origin, since cookies are not port-isolated
+    and SameSite=Lax still sends cookies between ports on one host.
+    An Origin header that is present must match; it is never rescued
+    by a Referer. Referer is consulted only when Origin is absent
+    (older browsers). Missing both fails closed.
+    """
+    expected = _expected_origin(request)
+    if expected is None:
+        return False
+    if "Origin" in request.headers:
+        candidate = _origin_triple(request.headers.get("Origin"))
+    else:
+        candidate = _origin_triple(request.headers.get("Referer"))
+    return candidate is not None and candidate == expected
+
+
+def _guard_charge_post():
+    """Auth + origin checks shared by the charging-price POST endpoints.
+
+    Returns an error response, or None when the request may proceed.
+    A valid bearer token skips the origin check: bearer tokens are
+    not attached automatically by browsers, so a request carrying one
+    cannot be a cross-site form POST (a form cannot set an
+    Authorization header, and a cross-origin fetch with one needs a
+    CORS preflight this app never grants). Cookie-authenticated and
+    unauthenticated requests always pass the origin check: cookies
+    are ambient, and with no token configured the origin check is the
+    only defense a local dashboard has.
+    """
+    header = request.headers.get("Authorization")
+    if auth.bearer_valid(header):
+        return None
+    if not _same_origin(request):
+        return _err_page("Could not verify this request came from the "
+                         "dashboard. Please submit from the dashboard "
+                         "page.", 403)
+    if not auth.authorized(header, request.cookies.get(SESSION_COOKIE)):
+        return _err_page("Sign in to the dashboard first.", 401)
+    return None
 
 
 def _csv_cell(value):
@@ -100,6 +231,9 @@ def export_charges():
 
 @app.route("/api/charge-cost-form", methods=["POST"])
 def set_charge_cost_form():
+    guard = _guard_charge_post()
+    if guard is not None:
+        return guard
     # charge_id is accepted for old cached dashboards but never used
     # for identity: numeric ids are reassigned on every re-derive, and
     # trusting one is how a stale dashboard used to price the wrong
@@ -156,6 +290,9 @@ def reassign_charge_price_form():
     """Move a saved price from an orphaned start time onto the correct
     session, or remove the orphan. Both endpoints are validated
     exactly; nothing is matched by guesswork."""
+    guard = _guard_charge_post()
+    if guard is not None:
+        return guard
     def _as_int(value):
         try:
             return int(value)

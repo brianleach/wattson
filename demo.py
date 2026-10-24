@@ -374,11 +374,16 @@ def main():
           f"{len(charges)} charges, {len(errands)} errand days")
 
     # Demo DC fast-charge cost, so the fuel-savings card shows a priced
-    # DC session alongside the home sessions.
+    # DC session alongside the home sessions. Prices live in the
+    # annotation table, not on the derived charge rows.
     with connect() as con:
+        import time as _time
         con.execute(
-            "UPDATE charges SET user_cost_per_kwh = 0.48 "
-            "WHERE charge_type = 'DC fast'")
+            "INSERT OR IGNORE INTO charge_prices (start_ts,"
+            " user_cost_per_kwh, updated_ts)"
+            " SELECT start_ts, 0.48, ? FROM charges"
+            " WHERE charge_type = 'DC fast'",
+            (int(_time.time()),))
 
     # Freshen the latest snapshot timestamp so the demo shows a recent
     # "last poll" time instead of the synthetic data's fixed end time.

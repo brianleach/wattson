@@ -33,9 +33,14 @@ class ChargeCsvTests(unittest.TestCase):
         with closing(sqlite3.connect(self.database)) as con, con:
             con.execute(
                 "INSERT INTO charges (start_ts, end_ts, charge_type, label,"
-                " minutes, kwh_added, user_cost_per_kwh)"
-                " VALUES (?, ?, 'DC', ?, 30, 10, ?)",
-                (timestamp, timestamp + 1800, label, price))
+                " minutes, kwh_added)"
+                " VALUES (?, ?, 'DC', ?, 30, 10)",
+                (timestamp, timestamp + 1800, label))
+            if price is not None:
+                con.execute(
+                    "INSERT INTO charge_prices (start_ts, user_cost_per_kwh,"
+                    " updated_ts) VALUES (?, ?, 1700000000)",
+                    (timestamp, price))
 
     def rows(self, response):
         return list(csv.DictReader(io.StringIO(response.get_data(as_text=True))))

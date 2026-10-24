@@ -125,29 +125,135 @@ class EndpointSecurityTests(unittest.TestCase):
         self.assertEqual(self.prices(), [])
 
     def test_cross_origin_origin_header_rejected(self):
+        # Cookie auth is the realistic CSRF case: the browser attaches
+        # the victim's cookie to the attacker's form POST.
+        cookie = self.login_cookie()
         resp = self.post_cost({"Origin": "https://evil.example",
-                               "Authorization": f"Bearer {TOKEN}"})
+                               "Cookie": f"{SESSION_COOKIE}={cookie}"})
         self.assertEqual(resp.status_code, 403)
         self.assertEqual(self.prices(), [(300, 0.6)])
 
     def test_cross_origin_referer_fallback_rejected(self):
+        cookie = self.login_cookie()
         resp = self.post_cost({"Referer": "https://evil.example/page",
-                               "Authorization": f"Bearer {TOKEN}"})
+                               "Cookie": f"{SESSION_COOKIE}={cookie}"})
         self.assertEqual(resp.status_code, 403)
         self.assertEqual(self.prices(), [(300, 0.6)])
 
     def test_same_origin_referer_without_origin_allows(self):
         # Older browsers may send no Origin on a form POST; the
         # Referer fallback keeps their legitimate submissions working.
+        cookie = self.login_cookie()
         resp = self.post_cost({"Referer": ORIGIN + "/#charging",
-                               "Authorization": f"Bearer {TOKEN}"})
+                               "Cookie": f"{SESSION_COOKIE}={cookie}"})
         self.assertEqual(resp.status_code, 303)
         self.assertEqual(self.prices(), [(100, 0.5), (300, 0.6)])
 
     def test_missing_origin_and_referer_rejected(self):
-        resp = self.post_cost({"Authorization": f"Bearer {TOKEN}"})
+        cookie = self.login_cookie()
+        resp = self.post_cost({"Cookie": f"{SESSION_COOKIE}={cookie}"})
         self.assertEqual(resp.status_code, 403)
         self.assertEqual(self.prices(), [(300, 0.6)])
+
+    def test_same_host_different_port_rejected(self):
+        # Cookies are not port-isolated, and SameSite=Lax still sends
+        # them between ports on one host, so the port must be checked.
+        cookie = self.login_cookie()
+        resp = self.post_cost({"Origin": "http://localhost:8080",
+                               "Cookie": f"{SESSION_COOKIE}={cookie}"})
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(self.prices(), [(300, 0.6)])
+
+    def test_same_host_different_scheme_rejected(self):
+        cookie = self.login_cookie()
+        resp = self.post_cost({"Origin": "https://localhost:80",
+                               "Cookie": f"{SESSION_COOKIE}={cookie}"})
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(self.prices(), [(300, 0.6)])
+
+    def test_invalid_origin_not_rescued_by_referer(self):
+        # Present-but-unparseable Origin must reject outright, not fall
+        # back to a valid-looking Referer (the old code fell back
+        # whenever the Origin had no usable hostname).
+        cookie = self.login_cookie()
+        resp = self.post_cost({"Origin": "garbage",
+                               "Referer": ORIGIN + "/#charging",
+                               "Cookie": f"{SESSION_COOKIE}={cookie}"})
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(self.prices(), [(300, 0.6)])
+
+    def test_canonical_public_origin_is_authoritative(self):
+        cookie = self.login_cookie()
+        with mock.patch("api.PUBLIC_ORIGIN", "https://dashboard.example"):
+            resp = self.post_cost(
+                {"Origin": "https://dashboard.example",
+                 "Cookie": f"{SESSION_COOKIE}={cookie}"})
+            self.assertEqual(resp.status_code, 303)
+            resp = self.post_cost(
+                {"Origin": ORIGIN,
+                 "Cookie": f"{SESSION_COOKIE}={cookie}"})
+            self.assertEqual(resp.status_code, 403)
+        self.assertEqual(self.prices(), [(100, 0.5), (300, 0.6)])
+
+    def test_localhost_port_8080_form_works(self):
+        client = api.app.test_client(use_cookies=False)
+        resp = client.post("/login", data={"password": TOKEN},
+                           headers={"X-Forwarded-For": "198.51.100.7"},
+                           base_url="http://localhost:8080")
+        self.assertEqual(resp.status_code, 303)
+        cookie = cookie_value(resp.headers["Set-Cookie"])
+        resp = client.post(
+            "/api/charge-cost-form",
+            data={"charge_id": "1", "start_ts": "100",
+                  "cost_per_kwh": "0.5"},
+            headers={"Origin": "http://localhost:8080",
+                     "Cookie": f"{SESSION_COOKIE}={cookie}"},
+            base_url="http://localhost:8080")
+        self.assertEqual(resp.status_code, 303)
+        self.assertEqual(self.prices(), [(100, 0.5), (300, 0.6)])
+
+    def test_https_proxy_form_works(self):
+        cookie = self.login_cookie()
+        resp = self.post_cost({"Origin": "https://localhost",
+                               "X-Forwarded-Proto": "https",
+                               "Cookie": f"{SESSION_COOKIE}={cookie}"})
+        self.assertEqual(resp.status_code, 303)
+        self.assertEqual(self.prices(), [(100, 0.5), (300, 0.6)])
+
+    def test_spoofed_forwarded_proto_from_untrusted_peer_rejected(self):
+        cookie = self.login_cookie()
+        resp = self.client.post(
+            "/api/charge-cost-form",
+            data={"charge_id": "1", "start_ts": "100",
+                  "cost_per_kwh": "0.5"},
+            headers={"Origin": "https://localhost",
+                     "X-Forwarded-Proto": "https",
+                     "Cookie": f"{SESSION_COOKIE}={cookie}"},
+            environ_base={"REMOTE_ADDR": "203.0.113.5"})
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(self.prices(), [(300, 0.6)])
+        resp = self.post_cost({"Origin": ORIGIN,
+                               "Cookie": f"{SESSION_COOKIE}={cookie}"})
+        self.assertEqual(resp.status_code, 303)
+
+    def test_bearer_without_origin_allowed(self):
+        # Bearer tokens are not attached automatically by browsers, so
+        # a script holding one does not need an Origin to prove it is
+        # not a cross-site form POST.
+        resp = self.post_cost({"Authorization": f"Bearer {TOKEN}"})
+        self.assertEqual(resp.status_code, 303)
+        self.assertEqual(self.prices(), [(100, 0.5), (300, 0.6)])
+
+    def test_bearer_cross_origin_not_subject_to_origin_check(self):
+        # Documents the exemption, not a hole: a cross-site form POST
+        # cannot set an Authorization header, and a cross-origin fetch
+        # with one needs a CORS preflight this app never grants, so a
+        # request carrying a valid bearer token is a script holding
+        # the token, not a confused-deputy browser.
+        resp = self.post_cost({"Origin": "https://evil.example",
+                               "Authorization": f"Bearer {TOKEN}"})
+        self.assertEqual(resp.status_code, 303)
+        self.assertEqual(self.prices(), [(100, 0.5), (300, 0.6)])
 
     def test_invalid_session_cookie_rejected(self):
         resp = self.post_cost({"Origin": ORIGIN,

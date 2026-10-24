@@ -78,11 +78,18 @@ class DashboardAuth:
             return False
         return expires_ms > self._now_ms()
 
+    def bearer_valid(self, authorization):
+        """True only for a valid Bearer token. Unlike a cookie, a bearer
+        token is not attached automatically by browsers, so a request
+        carrying one cannot be a cross-site form POST."""
+        return bool(self.token) and bool(authorization) \
+            and authorization.startswith("Bearer ") \
+            and _equal(authorization[7:], self.token)
+
     def authorized(self, authorization, cookie):
         if not self.token:
             return True
-        if authorization and authorization.startswith("Bearer ") \
-                and _equal(authorization[7:], self.token):
+        if self.bearer_valid(authorization):
             return True
         return bool(cookie) and self._cookie_valid(cookie)
 

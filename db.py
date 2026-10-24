@@ -132,10 +132,18 @@ CREATE TABLE IF NOT EXISTS weather_cache(
 @contextmanager
 def connect():
     con = sqlite3.connect(DB_PATH, timeout=30)
-    con.execute("PRAGMA journal_mode=WAL")
-    con.row_factory = sqlite3.Row
     try:
+        con.execute("PRAGMA journal_mode=WAL")
+        con.row_factory = sqlite3.Row
         yield con
+    except BaseException:
+        # Roll back explicitly. The previous shape relied on close()
+        # discarding the open transaction, which is implicit and easy
+        # to break by accident; a failed block must never commit
+        # partial work, so say so here.
+        con.rollback()
+        raise
+    else:
         con.commit()
     finally:
         con.close()
@@ -250,12 +258,13 @@ def rebuild_derived(trips: list[dict], drains: list[dict],
     with connect() as con:
         # Preserve user-entered DC fast-charge costs across the re-derive:
         # charges are deleted and re-inserted below, keyed by start_ts.
-        try:
-            _costs = {r[0]: r[1] for r in con.execute(
-                "SELECT start_ts, user_cost_per_kwh FROM charges "
-                "WHERE user_cost_per_kwh IS NOT NULL").fetchall()}
-        except Exception:
-            _costs = {}
+        # This read must not fail silently: if it errors, the rebuild
+        # aborts and the transaction rolls back, leaving the old rows
+        # (and their costs) intact for a later retry. A fallback to {}
+        # would commit a cost-stripped rebuild instead.
+        _costs = {r[0]: r[1] for r in con.execute(
+            "SELECT start_ts, user_cost_per_kwh FROM charges "
+            "WHERE user_cost_per_kwh IS NOT NULL").fetchall()}
         con.execute("DELETE FROM trips")
         con.execute("DELETE FROM drains")
         con.execute("DELETE FROM charges")

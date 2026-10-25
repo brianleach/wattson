@@ -38,6 +38,10 @@ promises. Take it, run it, break it, make it yours.
 - **Send destination**, send an address, a saved place, or a pasted map
   link to the car's navigation from the dashboard, with an energy check
   at your real efficiency and confirmation from the car's own route report.
+  An address from search is sent as a trip, so it becomes a route in the
+  car instead of a link the car cannot resolve; the modal reports Sent
+  as soon as the cloud accepts, and refuses a send while the car is
+  already navigating somewhere else unless you choose Send anyway.
   Requires a dashboard password (WATTSON_DASHBOARD_TOKEN) to be set
 - **Per-trip efficiency**, every drive with mi/kWh, energy used, drive mode,
   and a route map

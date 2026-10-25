@@ -88,6 +88,38 @@ class NavGateTests(unittest.TestCase):
                 headers=AUTH)
         self.assertEqual(r.status_code, 409)
 
+    def test_send_refused_when_car_has_active_trip(self):
+        self.patch_all(SECRET)
+        with mock.patch("nav.active_trip_conflict",
+                        return_value="Other Place"):
+            r = self.client.post(
+                "/api/nav/send",
+                json={"place": {"name": "B", "lat": 34.1,
+                                "lon": -118.1}},
+                headers=AUTH)
+        self.assertEqual(r.status_code, 409)
+        body = r.get_json()
+        self.assertEqual(body["code"], "active_trip")
+        self.assertIn("Other Place", body["error"])
+
+    def test_send_force_bypasses_active_trip(self):
+        self.patch_all(SECRET)
+        # A place without place_id or url auto-upgrades to a trip,
+        # which needs a car position for its origin.
+        self._seed_car_row()
+        with mock.patch("nav.active_trip_conflict") as check, \
+                mock.patch("nav.start_send_job",
+                           return_value="job1"):
+            r = self.client.post(
+                "/api/nav/send",
+                json={"place": {"name": "B", "lat": 34.1,
+                                "lon": -118.1},
+                      "force": True},
+                headers=AUTH)
+        check.assert_not_called()
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()["job_id"], "job1")
+
     def _seed_car_row(self):
         with closing(sqlite3.connect(self.database)) as con, con:
             con.execute(
@@ -645,6 +677,74 @@ class ConfirmerCoordsTests(unittest.TestCase):
             ("Other Name", 34.001, -118.0),
             ("Home", 34.1, -118.1),
             ("Elsewhere", 35.0, -119.0)])))
+
+
+class ActiveTripConflictTests(unittest.TestCase):
+    def _route(self, stops):
+        return {"destinations": [{"name": n, "lat": la, "lon": lo}
+                                 for n, la, lo in stops],
+                "chargers": []}
+
+    def _conflict(self, place, route=None, error=None):
+        calls = []
+
+        async def fake_route(timeout):
+            calls.append(timeout)
+            if error is not None:
+                raise error
+            return route
+
+        with mock.patch.object(nav, "_current_route_async",
+                               new=fake_route):
+            result = nav.active_trip_conflict(place)
+        return result, calls
+
+    def test_conflict_returns_first_destination(self):
+        place = {"name": "test street", "lat": 34.0, "lon": -118.0}
+        result, _ = self._conflict(
+            place, self._route([("First", 35.0, -119.0),
+                                ("Second", 36.0, -120.0)]))
+        self.assertEqual(result, "First")
+
+    def test_same_place_by_name_is_no_conflict(self):
+        place = {"name": "test street", "lat": 34.0, "lon": -118.0}
+        result, _ = self._conflict(
+            place, self._route([("Test Street Cafe", 35.0, -119.0)]))
+        self.assertIsNone(result)
+
+    def test_same_place_by_coords_is_no_conflict(self):
+        place = {"name": "test street", "lat": 34.0, "lon": -118.0}
+        result, _ = self._conflict(
+            place, self._route([("Elsewhere", 34.001, -118.0)]))
+        self.assertIsNone(result)
+
+    def test_no_route_is_no_conflict(self):
+        place = {"name": "test street", "lat": 34.0, "lon": -118.0}
+        result, _ = self._conflict(place, None)
+        self.assertIsNone(result)
+
+    def test_empty_destinations_is_no_conflict(self):
+        place = {"name": "test street", "lat": 34.0, "lon": -118.0}
+        result, _ = self._conflict(place, self._route([]))
+        self.assertIsNone(result)
+
+    def test_route_error_fails_open(self):
+        place = {"name": "test street", "lat": 34.0, "lon": -118.0}
+        result, _ = self._conflict(place, error=RuntimeError("boom"))
+        self.assertIsNone(result)
+
+    def test_place_without_coords_skips_the_check(self):
+        place = {"name": "test street", "lat": None, "lon": None}
+        result, calls = self._conflict(
+            place, self._route([("Other Place", 35.0, -119.0)]))
+        self.assertIsNone(result)
+        self.assertEqual(calls, [])
+
+    def test_empty_place_name_uses_coords_only(self):
+        place = {"name": "", "lat": 34.0, "lon": -118.0}
+        result, _ = self._conflict(
+            place, self._route([("Elsewhere", 35.0, -119.0)]))
+        self.assertEqual(result, "Elsewhere")
 
 
 class _FakeResp:

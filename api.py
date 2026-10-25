@@ -642,6 +642,17 @@ def nav_send():
     if mode == "trip" and place.get("lat") is None:
         return jsonify({"ok": False,
                         "error": "Trips need a place, not a link"}), 400
+    if not data.get("force"):
+        try:
+            conflict = nav.active_trip_conflict(place)
+        except Exception:
+            app.logger.exception("active-trip pre-check failed")
+            conflict = None
+        if conflict:
+            return jsonify({"ok": False, "code": "active_trip",
+                            "active_trip": conflict,
+                            "error": ("Car is already navigating to " + conflict +
+                                      ". Send anyway?")}), 409
     car, _wh = _car_state()
     home = None
     if mode == "trip":

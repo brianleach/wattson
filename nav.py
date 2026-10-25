@@ -661,6 +661,66 @@ def _reap_stale_locked() -> None:
             j["error"] = "The send timed out."
 
 
+async def _current_route_async(timeout: float = 15):
+    client, tokens = await _open_client()
+    try:
+        _, vehicle_id = await _ids(client, tokens)
+        watch = _RouteWatch()
+        unsub = await client.subscribe_for_parallax_messages(
+            vehicle_id, watch.cb, rvms=[TRIP_INFO_RVM])
+        if unsub is None:
+            return None
+        try:
+            await watch.wait_for(lambda r: True, timeout)
+            return parse_trip_info(watch.route) if watch.route else None
+        finally:
+            try:
+                await unsub()
+            except Exception:
+                pass
+    finally:
+        await _close(client)
+
+
+def active_trip_conflict(place: dict, timeout: float = 6) -> str | None:
+    """Name of the car's current active destination when it differs
+    from the place about to be sent, else None.
+
+    Read-only: subscribes to the car's route report and unsubscribes.
+    Fail-open: any error, or a place without coordinates, means no
+    conflict (the send proceeds and the job's own confirmation still
+    applies). A destination counts as the same place when its name
+    matches (either-direction substring) or its coordinates are
+    within half a mile of the sent place.
+    """
+    lat = place.get("lat")
+    lon = place.get("lon")
+    if lat is None or lon is None:
+        return None
+    try:
+        route = asyncio.run(_current_route_async(timeout))
+    except Exception:
+        return None
+    if not route:
+        return None
+    want = (place.get("name") or "").strip().lower()
+    dests = route.get("destinations") or []
+    for dest in dests:
+        name = (dest.get("name") or "").strip().lower()
+        if want and name and _Confirmer._name_match(want, name):
+            return None
+        dlat, dlon = dest.get("lat"), dest.get("lon")
+        if dlat is not None and dlon is not None:
+            try:
+                if haversine_mi(lat, lon, dlat, dlon) < 0.5:
+                    return None
+            except (TypeError, ValueError):
+                pass
+    if dests:
+        return (dests[0].get("name") or "that destination").strip()
+    return None
+
+
 def start_send_job(place: dict, mode: str, round_trip: bool,
                    home: dict | None, origin: dict) -> str | None:
     """Start a send job and return its id, or None when another

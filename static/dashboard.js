@@ -545,6 +545,7 @@ function navSend() {
         }
         if (waited > 170 && _navTimer) {
           clearInterval(_navTimer); _navTimer = null;
+          navSetSend(true, _navMode === 'trip' ? 'Send trip' : 'Send');
           if (!job.cloud_accepted) {
             document.getElementById('navstatus').textContent = 'Still no confirmation from the car. Check the car screen before sending again.';
           }
@@ -553,6 +554,7 @@ function navSend() {
       }).catch(function() {
         if (waited > 170 && _navTimer) {
           clearInterval(_navTimer); _navTimer = null;
+          navSetSend(true, _navMode === 'trip' ? 'Send trip' : 'Send');
           if (!accepted) {
             document.getElementById('navstatus').textContent = 'Still no confirmation from the car. Check the car screen before sending again.';
           }

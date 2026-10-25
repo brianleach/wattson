@@ -491,6 +491,34 @@ class NavSendUpgradeTests(unittest.TestCase):
         self.assertEqual(start.call_args.args[1], "direct")
 
 
+    def test_named_search_result_upgrades_to_trip(self):
+        self._seed_car_row()
+        with mock.patch("api._saved_places_cached",
+                        return_value=([], True)), \
+                mock.patch("nav.start_send_job",
+                           return_value="job3") as start:
+            r = self.client.post(
+                "/api/nav/send",
+                json={"place": {"name": "Test Cafe", "lat": 34.1,
+                                "lon": -118.1},
+                      "mode": "direct"},
+                headers=AUTH)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(start.call_args.args[1], "trip")
+
+    def test_upgrade_without_car_position_is_503(self):
+        with mock.patch("nav.start_send_job",
+                        return_value="job4") as start:
+            r = self.client.post(
+                "/api/nav/send",
+                json={"place": {"name": "B", "lat": 34.1,
+                                "lon": -118.1},
+                      "mode": "direct"},
+                headers=AUTH)
+        self.assertEqual(r.status_code, 503)
+        start.assert_not_called()
+
+
 class ConfirmerCoordsTests(unittest.TestCase):
     def setUp(self):
         patcher = mock.patch.object(nav, "parse_trip_info",
@@ -504,10 +532,17 @@ class ConfirmerCoordsTests(unittest.TestCase):
                                   "lon": lon, "place_id": None}],
                 "chargers": list(chargers)}
 
-    def test_no_baseline_coords_confirm_under_different_name(self):
+    def test_no_baseline_coords_do_not_confirm(self):
+        # Without a baseline, a coords match cannot distinguish "our
+        # send landed" from "the car was already going nearby": the
+        # stale nearby route adopts as the baseline instead of
+        # confirming. Only a new route to the sent coordinates can
+        # confirm after that.
         c = nav._Confirmer(None, "test street",
                            want_coords=(34.0, -118.0))
-        self.assertTrue(c.check(self.route("Business Name",
+        self.assertFalse(c.check(self.route("Business Name",
+                                            34.001, -118.0)))
+        self.assertTrue(c.check(self.route("Other Name",
                                            34.0, -118.0)))
 
     def test_no_baseline_different_coords_becomes_baseline(self):
@@ -528,6 +563,14 @@ class ConfirmerCoordsTests(unittest.TestCase):
                            want_coords=(34.0, -118.0))
         self.assertFalse(c.check(self.route("Test Street",
                                             34.0, -118.0)))
+
+    def test_nearby_but_wrong_destination_does_not_confirm(self):
+        c = nav._Confirmer(self.route("Home", 34.1, -118.1),
+                           "test street", want_coords=(34.0, -118.0))
+        self.assertFalse(c.check(self.route("Wrong Place",
+                                            34.004, -118.0)))
+        self.assertTrue(c.check(self.route("Business Name",
+                                           34.001, -118.0)))
 
     def test_no_coords_means_name_matching_only(self):
         c = nav._Confirmer(None, "test street")
@@ -621,11 +664,53 @@ class SendJobSentTests(unittest.TestCase):
                          "It may not have received the send.")
 
 
+    def test_accepted_then_error_reports_sent(self):
+        async def fake(place, mode, round_trip, home, origin, job):
+            job["cloud_accepted"] = True
+            raise RuntimeError("retry failed")
+
+        with mock.patch.dict(nav._JOBS, {}), \
+                mock.patch.object(nav, "_send_and_confirm_async", fake):
+            job_id = nav.start_send_job(
+                {"name": "B", "lat": 34.1, "lon": -118.1},
+                "trip", False, None, {"lat": 34.0, "lon": -118.0})
+            job = self._wait_until_not_sending(job_id)
+        self.assertEqual(job["state"], "sent")
+        self.assertIsNone(job["error"])
+
+    def test_unaccepted_error_reports_failed(self):
+        async def fake(place, mode, round_trip, home, origin, job):
+            raise RuntimeError("cloud rejected")
+
+        with mock.patch.dict(nav._JOBS, {}), \
+                mock.patch.object(nav, "_send_and_confirm_async", fake):
+            job_id = nav.start_send_job(
+                {"name": "B", "lat": 34.1, "lon": -118.1},
+                "trip", False, None, {"lat": 34.0, "lon": -118.0})
+            job = self._wait_until_not_sending(job_id)
+        self.assertEqual(job["state"], "failed")
+        self.assertEqual(job["error"], "cloud rejected")
+
+
 class JsSentTests(unittest.TestCase):
     def test_sent_message_is_wired(self):
         js = (Path(__file__).parent.parent / "static" /
               "dashboard.js").read_text(encoding="utf-8")
         self.assertIn("Sent. Verify in the car app.", js)
+
+    def test_failed_branch_precedes_sent_branch(self):
+        js = (Path(__file__).parent.parent / "static" /
+              "dashboard.js").read_text(encoding="utf-8")
+        failed = js.index("} else if (job.state === 'failed') {")
+        sent = js.index(
+            "} else if (job.state === 'sent' || job.cloud_accepted) {")
+        self.assertLess(failed, sent)
+
+    def test_fetch_failure_guard_tracks_acceptance(self):
+        js = (Path(__file__).parent.parent / "static" /
+              "dashboard.js").read_text(encoding="utf-8")
+        self.assertIn("accepted = true;", js)
+        self.assertIn("!accepted", js)
 
 
 if __name__ == "__main__":

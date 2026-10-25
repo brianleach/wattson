@@ -504,10 +504,10 @@ class _Confirmer:
         return any(self._matches(n) for n in names if n)
 
     def _coords_match(self, route) -> bool:
-        # A destination within half a mile of the sent coordinates
-        # counts as the same place. Link sends carry no coordinates,
-        # so this stays off for them and name matching is unchanged
-        # there.
+        # A destination within a tenth of a mile of the sent
+        # coordinates counts as the same place. Link sends carry no
+        # coordinates, so this stays off for them and name matching
+        # is unchanged there.
         if not self._want_coords:
             return False
         wlat, wlon = self._want_coords
@@ -515,7 +515,7 @@ class _Confirmer:
             lat, lon = d.get("lat"), d.get("lon")
             if lat is None or lon is None:
                 continue
-            if haversine_mi(wlat, wlon, lat, lon) <= 0.5:
+            if haversine_mi(wlat, wlon, lat, lon) <= 0.1:
                 return True
         return False
 
@@ -533,8 +533,11 @@ class _Confirmer:
             return False
         names = _names(route)
         if not self._have_baseline:
-            if (self._matches_any(names) or self._coords_match(route)) \
-                    and self._home_ok(names):
+            # Name matching only here. A coords match without a
+            # baseline cannot distinguish "our send landed" from
+            # "the car was already going nearby", so a stale nearby
+            # route must adopt as the baseline below, not confirm.
+            if self._matches_any(names) and self._home_ok(names):
                 return True
             self._names = names
             self._plan = _route_fingerprint(route)
@@ -679,8 +682,16 @@ def start_send_job(place: dict, mode: str, round_trip: bool,
                                     "It may not have received the send.")
         except Exception as exc:  # surfaced to the dashboard as-is
             with _JOBS_LOCK:
-                job["state"] = "failed"
-                job["error"] = str(exc) or exc.__class__.__name__
+                if job.get("cloud_accepted"):
+                    # An accepted send does not un-happen because a
+                    # later attempt failed: the cloud still holds
+                    # it, so the job is sent, not failed. Failed
+                    # now means nothing was ever accepted.
+                    job["state"] = "sent"
+                    job["error"] = None
+                else:
+                    job["state"] = "failed"
+                    job["error"] = str(exc) or exc.__class__.__name__
 
     threading.Thread(target=run, daemon=True).start()
     return job_id

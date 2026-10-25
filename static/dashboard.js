@@ -551,11 +551,13 @@ function navSend() {
           // Else the "Sent. Verify in the car app." text above stays.
         }
       }).catch(function() {
-        if (waited > 170 && _navTimer && !accepted) {
+        if (waited > 170 && _navTimer) {
           clearInterval(_navTimer); _navTimer = null;
-          document.getElementById('navstatus').textContent = 'Still no confirmation from the car. Check the car screen before sending again.';
+          if (!accepted) {
+            document.getElementById('navstatus').textContent = 'Still no confirmation from the car. Check the car screen before sending again.';
+          }
+          // Else the "Sent. Verify in the car app." text above stays.
         }
-        // Else the "Sent. Verify in the car app." text above stays.
       });
     }, 3000);
   }).catch(function() {

@@ -22,6 +22,24 @@ This is a personal side project. It works, I run it every day, and I'm
 sharing it in case it's useful or fun for you too. No roadmap, no SLA, no
 promises. Take it, run it, break it, make it yours.
 
+## Try the demo (no Rivian account needed)
+
+**[Click through the live demo](https://www.givemeasec.com/wattson-demo/)**, or build it yourself:
+
+```bash
+python demo.py
+```
+
+This builds a 10-day fictional driving history for a Demo R2 in Los
+Angeles (Venice home base, Disneyland day trip, Newport Beach fast
+charge, the works), runs the real analysis pipeline on it, and writes
+a dashboard stamped with a demo banner. All data is synthetic; the
+places are real, the driver is not.
+
+Open `demo-data/www/rivian-dashboard.html` in a browser to click around.
+The whole `demo-data/www/` folder is a static site, so you can also
+upload it anywhere to share the demo.
+
 ## What it does
 
 > **New in 0.9.0: Send destination.** Send a place to the car's
@@ -122,24 +140,6 @@ Then `docker compose up -d` again. Now:
   for the rest of the 10 minutes.
 
 `/api/health` stays open so uptime checks keep working.
-
-## Try the demo (no Rivian account needed)
-
-**[Click through the live demo](https://www.givemeasec.com/wattson-demo/)**, or build it yourself:
-
-```bash
-python demo.py
-```
-
-This builds a 10-day fictional driving history for a Demo R2 in Los
-Angeles (Venice home base, Disneyland day trip, Newport Beach fast
-charge, the works), runs the real analysis pipeline on it, and writes
-a dashboard stamped with a demo banner. All data is synthetic; the
-places are real, the driver is not.
-
-Open `demo-data/www/rivian-dashboard.html` in a browser to click around.
-The whole `demo-data/www/` folder is a static site, so you can also
-upload it anywhere to share the demo.
 
 ## How it works
 

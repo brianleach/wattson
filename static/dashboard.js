@@ -222,11 +222,11 @@ var _costChargeId=null;var _costStartTs=null;var _costOpener=null;function openC
 var _navDemo = !!window.WATTSON_DEMO;
 var _navCar = null, _navWhMi = 380, _navSaved = [], _navListArr = [], _navStale = false,
     _navPlace = null, _navSelIdx = null, _navMode = 'direct', _navRound = false,
-    _navJob = null, _navTimer = null, _navTab = 'rec';
+    _navJob = null, _navTimer = null, _navTab = 'rec', _navForce = false;
 var _navUsableKwh = 87.9;  // refreshed from /api/nav/state (config.USABLE_KWH)
 var NAV_ROAD_FACTOR = 1.3;  // straight-line distance to road estimate
 function openNavModal() {
-  _navPlace = null; _navSelIdx = null; _navMode = 'direct'; _navRound = false; _navJob = null;
+  _navPlace = null; _navSelIdx = null; _navMode = 'direct'; _navRound = false; _navJob = null; _navForce = false;
   _navTab = 'rec';
   document.getElementById('navmodal').classList.remove('hidden');
   document.getElementById('navq').value = '';
@@ -485,10 +485,16 @@ function navPlan() {
 function navSend() {
   navSetSend(false);
   document.getElementById('navstatus').textContent = 'Sending to the car...';
+  var force = _navForce === true; _navForce = false;
   fetch('/api/nav/send', {method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({place: _navPlace, mode: _navMode, round_trip: _navRound})
+    body: JSON.stringify({place: _navPlace, mode: _navMode, round_trip: _navRound, force: force})
   }).then(function(r) { return r.json(); }).then(function(j) {
     if (!j.ok) {
+      if (j.code === 'active_trip') {
+        document.getElementById('navstatus').textContent = j.error || 'Car already has an active trip.';
+        _navForce = true;
+        navSetSend(true, 'Send anyway'); return;
+      }
       document.getElementById('navstatus').textContent = j.error || 'Send failed.';
       navSetSend(true, _navMode === 'trip' ? 'Send trip' : 'Send'); return;
     }

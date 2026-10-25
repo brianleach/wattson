@@ -207,3 +207,72 @@ describe('nav modal 170s timeout', () => {
       'Send must be usable again after polling stops');
   });
 });
+
+function makePostMock(postOutcomes) {
+  // postOutcomes: per send POST, either { payload } (resolved JSON)
+  // or { reject: true } (fetch failure). Records request bodies.
+  const bodies = [];
+  let i = 0;
+  const mock = (url, opts) => {
+    if (opts && opts.method === 'POST') {
+      bodies.push(JSON.parse(opts.body));
+      const outcome = postOutcomes[i++];
+      if (!outcome || outcome.reject) {
+        return Promise.reject(new Error('offline'));
+      }
+      return Promise.resolve({
+        json: () => Promise.resolve(outcome.payload),
+      });
+    }
+    return Promise.reject(new Error('unexpected GET'));
+  };
+  mock.bodies = bodies;
+  return mock;
+}
+
+describe('nav modal active-trip guard', () => {
+  test('active trip 409 shows Send anyway and arms force', async () => {
+    const fetchMock = makePostMock([{
+      payload: {
+        ok: false,
+        code: 'active_trip',
+        error: 'Car is already navigating to Other Place. Send anyway?',
+      },
+    }]);
+    const ctx = loadModal(fetchMock);
+    startSend(ctx);
+    await flush();
+    assert.equal(
+      ctx.elements.navstatus.textContent,
+      'Car is already navigating to Other Place. Send anyway?');
+    assert.equal(ctx.elements.navsendbtn.textContent, 'Send anyway');
+    assert.equal(ctx.elements.navsendbtn.disabled, false);
+    assert.equal(ctx.sandbox._navForce, true);
+  });
+
+  test('forced re-send carries force and consumes the flag', async () => {
+    const fetchMock = makePostMock([
+      {
+        payload: {
+          ok: false,
+          code: 'active_trip',
+          error: 'Car is already navigating to Other Place. Send anyway?',
+        },
+      },
+      { payload: { ok: false, error: 'Send failed.' } },
+    ]);
+    const ctx = loadModal(fetchMock);
+    startSend(ctx);
+    await flush();
+    assert.equal(ctx.sandbox._navForce, true);
+    startSend(ctx);
+    await flush();
+    assert.equal(fetchMock.bodies.length, 2);
+    assert.equal(fetchMock.bodies[0].force, false);
+    assert.equal(fetchMock.bodies[1].force, true);
+    assert.equal(ctx.sandbox._navForce, false);
+    assert.equal(ctx.elements.navstatus.textContent, 'Send failed.');
+    assert.equal(ctx.elements.navsendbtn.textContent, 'Send');
+    assert.equal(ctx.elements.navsendbtn.disabled, false);
+  });
+});

@@ -1,0 +1,209 @@
+// Behavioral tests for the send-destination modal polling loop.
+//
+// These execute the real static/dashboard.js in a vm context with
+// stubbed DOM globals, fake timers, and a scripted fetch mock, and
+// assert on the resulting button state and status text. They are
+// deliberately not string-presence checks: the old code passes the
+// string checks but fails these tests, because its 170s timeout
+// guards cleared the timer without re-enabling the Send button.
+//
+// Run: node --test tests/test_nav_modal.js
+// Run against another copy: DASHBOARD_JS=/path/to/dashboard.js
+//   node --test tests/test_nav_modal.js
+const { describe, test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+
+const DASHBOARD_JS = process.env.DASHBOARD_JS ||
+  path.join(__dirname, '..', 'static', 'dashboard.js');
+
+function makeEl() {
+  return {
+    textContent: '',
+    innerHTML: '',
+    value: '',
+    disabled: false,
+    dataset: {},
+    classList: {
+      add() {},
+      remove() {},
+      toggle() {},
+      contains() { return false; },
+    },
+    addEventListener() {},
+    focus() {},
+    click() {},
+    submit() {},
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    insertAdjacentHTML() {},
+    style: {},
+    getAttribute() { return null; },
+    getBoundingClientRect() { return { top: 0, bottom: 0 }; },
+  };
+}
+
+function flush() {
+  // Drain the promise chains the modal code builds (fetch .then
+  // handlers run on microtasks, so a few macrotask hops suffice).
+  let p = Promise.resolve();
+  for (let i = 0; i < 5; i++) {
+    p = p.then(() => new Promise((r) => setImmediate(r)));
+  }
+  return p;
+}
+
+function loadModal(fetchMock) {
+  const elements = {};
+  const timers = new Map();
+  let nextTimer = 1;
+  const sandbox = {
+    window: {
+      scrollY: 0,
+      innerHeight: 768,
+      addEventListener() {},
+      scrollTo() {},
+      matchMedia() { return { matches: false }; },
+    },
+    document: {
+      getElementById: (id) => {
+        const el = (elements[id] ||= makeEl());
+        // The activity list IIFE parses this element at load time.
+        if (id === 'actdata') el.textContent = '{"days":[]}';
+        return el;
+      },
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      createElement: () => makeEl(),
+      addEventListener() {},
+      documentElement: { scrollHeight: 0 },
+      activeElement: null,
+    },
+    requestAnimationFrame: () => 0,
+    performance: { now: () => 0 },
+    alert() {},
+    confirm() { return false; },
+    console,
+    fetch: fetchMock,
+    setInterval: (fn) => {
+      const id = nextTimer++;
+      timers.set(id, fn);
+      return id;
+    },
+    clearInterval: (id) => { timers.delete(id); },
+    setTimeout,
+    clearTimeout,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync(DASHBOARD_JS, 'utf8'), sandbox,
+    { filename: DASHBOARD_JS });
+  return { sandbox, elements, timers };
+}
+
+// Drives one polling tick: invoke the nav interval callback, then
+// let its fetch promise chain settle.
+async function tick(timers, navTimerId) {
+  const fn = timers.get(navTimerId);
+  assert.ok(fn, 'expected the nav polling timer to still be running');
+  fn();
+  await flush();
+}
+
+function startSend(ctx, fetchCalls) {
+  const { sandbox, timers } = ctx;
+  sandbox._navPlace = {
+    name: 'Test Street',
+    address: 'Test Street, Testville',
+    lat: 34.0,
+    lon: -118.0,
+    place_id: null,
+    url: null,
+  };
+  sandbox._navMode = 'direct';
+  sandbox._navRound = false;
+  const before = new Set(timers.keys());
+  sandbox.navSend();
+  return { before, fetchCalls };
+}
+
+async function driveToTimeout(ctx, navTimerId) {
+  // waited advances 3 per tick; 57 ticks reach 171 > 170.
+  for (let i = 0; i < 57; i++) {
+    await tick(ctx.timers, navTimerId);
+  }
+}
+
+function makeFetchMock(statusOutcomes) {
+  // statusOutcomes: per status poll, either { state, cloud_accepted }
+  // (resolved) or the string 'reject' (fetch failure). The initial
+  // send POST always succeeds with a job id.
+  const calls = { send: 0, status: 0 };
+  let i = 0;
+  const mock = (url, opts) => {
+    if (opts && opts.method === 'POST') {
+      calls.send++;
+      return Promise.resolve({
+        json: () => Promise.resolve({ ok: true, job_id: 'job1' }),
+      });
+    }
+    calls.status++;
+    const outcome = statusOutcomes[i++];
+    if (outcome === 'reject' || outcome === undefined) {
+      return Promise.reject(new Error('offline'));
+    }
+    return Promise.resolve({
+      json: () => Promise.resolve({ ok: true, job: outcome }),
+    });
+  };
+  mock.calls = calls;
+  return mock;
+}
+
+describe('nav modal 170s timeout', () => {
+  test('accepted send + repeated polling failures: sent text stays, Send re-enables', async () => {
+    const fetchMock = makeFetchMock([
+      { state: 'sending', cloud_accepted: true },
+      ...Array(60).fill('reject'),
+    ]);
+    const ctx = loadModal(fetchMock);
+    const { before } = startSend(ctx, fetchMock.calls);
+    await flush();
+    const navTimerId = [...ctx.timers.keys()]
+      .find((id) => !before.has(id));
+    assert.ok(navTimerId, 'expected navSend to start a polling timer');
+    // First tick: the accepted status sets the sent text.
+    await tick(ctx.timers, navTimerId);
+    assert.equal(
+      ctx.elements.navstatus.textContent, 'Sent. Verify in the car app.');
+    assert.equal(ctx.elements.navsendbtn.disabled, true);
+    // Remaining ticks: every poll fails until past 170s.
+    for (let i = 1; i < 57; i++) {
+      await tick(ctx.timers, navTimerId);
+    }
+    assert.equal(ctx.timers.size, 0, 'polling timer must be cleared');
+    assert.equal(
+      ctx.elements.navstatus.textContent, 'Sent. Verify in the car app.',
+      'the sent text must not be overwritten by the timeout');
+    assert.equal(ctx.elements.navsendbtn.disabled, false,
+      'Send must be usable again after polling stops');
+  });
+
+  test('unaccepted send + repeated polling failures: neutral text, Send re-enables', async () => {
+    const fetchMock = makeFetchMock(Array(60).fill('reject'));
+    const ctx = loadModal(fetchMock);
+    const { before } = startSend(ctx, fetchMock.calls);
+    await flush();
+    const navTimerId = [...ctx.timers.keys()]
+      .find((id) => !before.has(id));
+    assert.ok(navTimerId, 'expected navSend to start a polling timer');
+    await driveToTimeout(ctx, navTimerId);
+    assert.equal(ctx.timers.size, 0, 'polling timer must be cleared');
+    assert.equal(
+      ctx.elements.navstatus.textContent,
+      'Still no confirmation from the car. Check the car screen before sending again.');
+    assert.equal(ctx.elements.navsendbtn.disabled, false,
+      'Send must be usable again after polling stops');
+  });
+});

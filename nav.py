@@ -11,6 +11,8 @@ session plumbing):
 - One destination: ParseAndShareLocationToVehicle takes a LINK, the
   same share-sheet trick the app uses. A telenav.id link when we have
   a Google place id, else a Google Maps link with the coordinates.
+  Search results with no place id are sent as a trip instead: a
+  bare-coordinate link does not become a destination in the car.
 - A trip: PlanTrip2 asks Rivian's planner for a preview (arrival
   charge, charging stops it would add); sendTripToVehicle sends the
   waypoints and the car plans the route and charging stops itself.
@@ -209,7 +211,11 @@ def search_places(query: str, near_lat=None, near_lon=None) -> list[dict]:
             continue
         seen.add(key)
         display = r.get("display_name") or ""
-        name = (r.get("name") or "").strip() or display.split(",")[0]
+        # Address results carry no name from Nominatim, so the old
+        # fallback used only the house number, which is what the car
+        # then displayed. Use the full address as the name instead,
+        # so the car shows the address.
+        name = (r.get("name") or "").strip() or display
         out.append({"name": name, "address": display, "lat": lat,
                     "lon": lon, "place_id": None, "type": "", "url": None})
     return out
@@ -474,9 +480,15 @@ class _Confirmer:
     """
 
     def __init__(self, baseline: dict | None, want: str,
-                 home: str = ""):
+                 home: str = "", want_coords=None):
         self._want = want
         self._home = home
+        # Coordinates of the sent destination, when known (trips and
+        # named shares carry them; link sends do not). A route report
+        # to these coordinates confirms even when the car names the
+        # place differently from the sent name (e.g. the planner
+        # resolves an address waypoint to its business name).
+        self._want_coords = want_coords
         self._have_baseline = baseline is not None
         self._names = _names(baseline)
         self._plan = _route_fingerprint(baseline)
@@ -490,6 +502,41 @@ class _Confirmer:
 
     def _matches_any(self, names) -> bool:
         return any(self._matches(n) for n in names if n)
+
+    def _coords_match(self, route) -> bool:
+        # A destination at the sent place's expected position within
+        # a tenth of a mile counts as the same place. Link sends
+        # carry no coordinates, so this stays off for them and name
+        # matching is unchanged there. Only the expected position
+        # counts: a foreign multi-stop route passing near the sent
+        # place on its way elsewhere must not confirm. One-way
+        # sends are single-stop, so the final destination is the
+        # sent place. Round-trip sends put the place first and home
+        # last, so the first stop is the sent place and the route
+        # must end at home: a single reported leg is the car still
+        # driving to the place, but any destination after home
+        # means the car's actual final destination is elsewhere.
+        if not self._want_coords:
+            return False
+        dests = route.get("destinations") or []
+        if not dests:
+            return False
+        wlat, wlon = self._want_coords
+
+        def close(d):
+            lat, lon = d.get("lat"), d.get("lon")
+            return lat is not None and lon is not None and \
+                haversine_mi(wlat, wlon, lat, lon) <= 0.1
+
+        if self._home:
+            if not close(dests[0]):
+                return False
+            if len(dests) == 1:
+                return True
+            return len(dests) == 2 and self._name_match(
+                self._home,
+                (dests[1].get("name") or "").strip().lower())
+        return close(dests[-1])
 
     def _home_ok(self, names) -> bool:
         # A round trip counts as confirmed only by a route that
@@ -505,6 +552,10 @@ class _Confirmer:
             return False
         names = _names(route)
         if not self._have_baseline:
+            # Name matching only here. A coords match without a
+            # baseline cannot distinguish "our send landed" from
+            # "the car was already going nearby", so a stale nearby
+            # route must adopt as the baseline below, not confirm.
             if self._matches_any(names) and self._home_ok(names):
                 return True
             self._names = names
@@ -518,6 +569,12 @@ class _Confirmer:
         new = names - self._names
         if new and any(self._matches(n) for n in new):
             return True
+        # A route to the sent coordinates confirms even under a
+        # different name, provided the plan itself changed: an
+        # identical re-report still must not confirm a send.
+        if self._coords_match(route) and \
+                _route_fingerprint(route) != self._plan:
+            return True
         # Same destination as the baseline counts only when the
         # plan itself changed (see _route_fingerprint) and the
         # report is about the place we sent. A re-send that
@@ -529,7 +586,8 @@ class _Confirmer:
                     self._matches_any(names))
 
 
-async def _send_and_confirm_async(place, mode, round_trip, home, origin):
+async def _send_and_confirm_async(place, mode, round_trip, home, origin,
+                                  job):
     """Send once, watch for the car's own confirmation, re-send once if
     the car never reports the route (the send can be lost while the car
     is falling asleep; the cloud's 'success' proves nothing)."""
@@ -549,7 +607,10 @@ async def _send_and_confirm_async(place, mode, round_trip, home, origin):
             confirmer = _Confirmer(
                 baseline, (place.get("name") or "").strip().lower(),
                 (home.get("name") or "").strip().lower()
-                if round_trip and home else "")
+                if round_trip and home else "",
+                (place.get("lat"), place.get("lon"))
+                if place.get("lat") is not None
+                and place.get("lon") is not None else None)
 
             stops = [place] + ([home] if round_trip and home else [])
             for attempt in (1, 2):
@@ -559,6 +620,12 @@ async def _send_and_confirm_async(place, mode, round_trip, home, origin):
                     ok = await _share_async(client, vehicle_id, place)
                 if not ok:
                     raise RuntimeError("Rivian's cloud did not accept the send")
+                # Rivian accepted the send into its cloud. That is
+                # not proof the car received it (only the car's own
+                # route report proves that), but it is the honest
+                # "sent" state: the cloud holds it until the car
+                # wakes or reboots and picks it up.
+                job["cloud_accepted"] = True
                 if await watch.wait_for(confirmer.check, 50):
                     return parse_trip_info(watch.route)
             return None
@@ -603,6 +670,7 @@ def start_send_job(place: dict, mode: str, round_trip: bool,
     job_id = uuid.uuid4().hex[:12]
     job = {"id": job_id, "state": "sending", "route": None, "error": None,
            "place_name": place.get("name") or "destination", "mode": mode,
+           "cloud_accepted": False,
            "ts": time.time()}
     with _JOBS_LOCK:
         _reap_stale_locked()
@@ -615,19 +683,34 @@ def start_send_job(place: dict, mode: str, round_trip: bool,
     def run():
         try:
             route = asyncio.run(_send_and_confirm_async(
-                place, mode, round_trip, home, origin))
+                place, mode, round_trip, home, origin, job))
             with _JOBS_LOCK:
                 if route:
                     job["state"] = "confirmed"
                     job["route"] = route
+                elif job.get("cloud_accepted"):
+                    # Accepted by Rivian's cloud but the car never
+                    # reported a route in the window. That is not a
+                    # failure: the cloud holds the send until the
+                    # car wakes. Report it as sent, not failed.
+                    job["state"] = "sent"
+                    job["error"] = None
                 else:
                     job["state"] = "failed"
                     job["error"] = ("The car never confirmed the route. "
                                     "It may not have received the send.")
         except Exception as exc:  # surfaced to the dashboard as-is
             with _JOBS_LOCK:
-                job["state"] = "failed"
-                job["error"] = str(exc) or exc.__class__.__name__
+                if job.get("cloud_accepted"):
+                    # An accepted send does not un-happen because a
+                    # later attempt failed: the cloud still holds
+                    # it, so the job is sent, not failed. Failed
+                    # now means nothing was ever accepted.
+                    job["state"] = "sent"
+                    job["error"] = None
+                else:
+                    job["state"] = "failed"
+                    job["error"] = str(exc) or exc.__class__.__name__
 
     threading.Thread(target=run, daemon=True).start()
     return job_id

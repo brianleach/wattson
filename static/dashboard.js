@@ -317,9 +317,12 @@ function navExpandSel(row) {
 }
 function navRow(p, i) {
   var dist = (p.distance_mi !== undefined && p.distance_mi !== null) ? ' &middot; ' + p.distance_mi + ' mi' : '';
+  // Address results now carry the full address as the name, so do
+  // not repeat it on the line below; keep the distance if present.
+  var addr = (p.address && p.address !== p.name) ? navEsc(p.address) + dist : dist.replace(/^ &middot; /, '');
   return '<div class="navrow" onclick="navPick(' + i + ', this)">' +
     '<div class="navrow-name">' + navEsc(p.name) + '</div>' +
-    '<div class="navrow-addr">' + navEsc(p.address || '') + dist + '</div></div>';
+    (addr ? '<div class="navrow-addr">' + addr + '</div>' : '') + '</div>';
 }
 function navEsc(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -491,6 +494,7 @@ function navSend() {
     }
     _navJob = j.job_id;
     var waited = 0;
+    var accepted = false;
     if (_navTimer) clearInterval(_navTimer);
     _navTimer = setInterval(function() {
       waited += 3;
@@ -519,17 +523,42 @@ function navSend() {
           clearInterval(_navTimer); _navTimer = null;
           document.getElementById('navstatus').textContent = job.error || 'The send failed.';
           navSetSend(true, _navMode === 'trip' ? 'Send trip' : 'Send');
+        } else if (job.state === 'sent' || job.cloud_accepted) {
+          // Rivian accepted the send into its cloud. Only the car's
+          // own route report proves receipt, and that can arrive
+          // much later (after a wake or reboot), so say sent and
+          // point at the car app instead of waiting out the window
+          // for a failure message. While the job is still sending,
+          // polling continues, so a later report can still upgrade
+          // this to the confirmed text above. Once the job itself
+          // reaches 'sent', polling stops: 'sent' is terminal
+          // (cloud accepted, car unverified) and the car app is
+          // the source of truth after that.
+          accepted = true;
+          if (job.state === 'sent') {
+            clearInterval(_navTimer); _navTimer = null;
+            navSetSend(true, _navMode === 'trip' ? 'Send trip' : 'Send');
+          }
+          document.getElementById('navstatus').textContent = 'Sent. Verify in the car app.';
         } else {
           document.getElementById('navstatus').textContent = 'Sent. Waiting for the car to confirm, usually under a minute.';
         }
         if (waited > 170 && _navTimer) {
           clearInterval(_navTimer); _navTimer = null;
-          document.getElementById('navstatus').textContent = 'Still no confirmation from the car. Check the car screen before sending again.';
+          navSetSend(true, _navMode === 'trip' ? 'Send trip' : 'Send');
+          if (!job.cloud_accepted) {
+            document.getElementById('navstatus').textContent = 'Still no confirmation from the car. Check the car screen before sending again.';
+          }
+          // Else the "Sent. Verify in the car app." text above stays.
         }
       }).catch(function() {
         if (waited > 170 && _navTimer) {
           clearInterval(_navTimer); _navTimer = null;
-          document.getElementById('navstatus').textContent = 'Still no confirmation from the car. Check the car screen before sending again.';
+          navSetSend(true, _navMode === 'trip' ? 'Send trip' : 'Send');
+          if (!accepted) {
+            document.getElementById('navstatus').textContent = 'Still no confirmation from the car. Check the car screen before sending again.';
+          }
+          // Else the "Sent. Verify in the car app." text above stays.
         }
       });
     }, 3000);

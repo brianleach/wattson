@@ -630,6 +630,15 @@ def nav_send():
     # A round trip only exists in trip mode. A direct share is one-way
     # by construction and must not silently drop the return leg.
     mode = "trip" if (data.get("mode") == "trip" or round_trip) else "direct"
+    # Address results have no place identity, and a bare-coordinate
+    # link does not become a destination in the car: Rivian accepts
+    # the share but creates no place and no route, and the parked
+    # car falls back to its previous trip. Send those as a
+    # structured trip instead, where the waypoint carries the name,
+    # address, and coordinates directly. Saved places (place_id)
+    # and pasted links (url) keep their existing paths.
+    if mode == "direct" and not place.get("place_id") and not place.get("url"):
+        mode = "trip"
     if mode == "trip" and place.get("lat") is None:
         return jsonify({"ok": False,
                         "error": "Trips need a place, not a link"}), 400

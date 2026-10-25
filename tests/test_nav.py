@@ -4,8 +4,10 @@ The nav routes act on the car and read its saved places and live
 location, so unlike the rest of the API they require a dashboard
 token to be set at all (see api._nav_gate).
 """
+import json
 import sqlite3
 import tempfile
+import time
 import unittest
 from contextlib import closing
 from pathlib import Path
@@ -114,13 +116,17 @@ class NavGateTests(unittest.TestCase):
 
     def test_direct_send_needs_no_car_position_or_places(self):
         self.patch_all(SECRET)
+        # A saved place (with a place id) stays direct. A bare
+        # address result without one now upgrades to a trip, so it
+        # would need a car position and saved places instead.
         with mock.patch("api._saved_places_cached") as places, \
                 mock.patch("nav.start_send_job",
                            return_value="job9") as start:
             r = self.client.post(
                 "/api/nav/send",
                 json={"place": {"name": "B", "lat": 34.1,
-                                "lon": -118.1},
+                                "lon": -118.1,
+                                "place_id": "ChIJtest"},
                       "mode": "direct"},
                 headers=AUTH)
         self.assertEqual(r.status_code, 200)
@@ -429,6 +435,351 @@ class ConfirmerTests(unittest.TestCase):
     def test_baseline_new_destination_confirms(self):
         c = nav._Confirmer(self.route("Home"), "moon house")
         self.assertTrue(c.check(self.route("Moon House")))
+
+
+
+
+class NavSendUpgradeTests(unittest.TestCase):
+    """Address results (no place id, no url) now upgrade to trips."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.database = Path(self.temp.name) / "tracker.db"
+        with closing(sqlite3.connect(self.database)) as con:
+            con.executescript(db.SCHEMA)
+        self.client = api.app.test_client()
+        for target, value in [
+            ("api.auth", DashboardAuth(SECRET, lambda: 1700000000)),
+            ("api.DB_PATH", self.database),
+        ]:
+            patcher = mock.patch(target, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _seed_car_row(self):
+        with closing(sqlite3.connect(self.database)) as con, con:
+            con.execute(
+                "INSERT INTO snapshots (ts, soc, range_mi, lat, lon)"
+                " VALUES (1700000000, 55.0, 180.0, 34.0, -118.0)")
+
+    def test_address_result_without_place_id_upgrades_to_trip(self):
+        self._seed_car_row()
+        with mock.patch("api._saved_places_cached",
+                        return_value=([], True)), \
+                mock.patch("nav.start_send_job",
+                           return_value="job1") as start:
+            r = self.client.post(
+                "/api/nav/send",
+                json={"place": {"name": "B", "lat": 34.1,
+                                "lon": -118.1},
+                      "mode": "direct"},
+                headers=AUTH)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(start.call_args.args[1], "trip")
+
+    def test_pasted_link_stays_direct(self):
+        with mock.patch("nav.start_send_job",
+                        return_value="job2") as start:
+            r = self.client.post(
+                "/api/nav/send",
+                json={"place": {"url":
+                                "https://www.google.com/maps/place/X"},
+                      "mode": "direct"},
+                headers=AUTH)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(start.call_args.args[1], "direct")
+
+
+    def test_named_search_result_upgrades_to_trip(self):
+        self._seed_car_row()
+        with mock.patch("api._saved_places_cached",
+                        return_value=([], True)), \
+                mock.patch("nav.start_send_job",
+                           return_value="job3") as start:
+            r = self.client.post(
+                "/api/nav/send",
+                json={"place": {"name": "Test Cafe", "lat": 34.1,
+                                "lon": -118.1},
+                      "mode": "direct"},
+                headers=AUTH)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(start.call_args.args[1], "trip")
+
+    def test_upgrade_without_car_position_is_503(self):
+        with mock.patch("nav.start_send_job",
+                        return_value="job4") as start:
+            r = self.client.post(
+                "/api/nav/send",
+                json={"place": {"name": "B", "lat": 34.1,
+                                "lon": -118.1},
+                      "mode": "direct"},
+                headers=AUTH)
+        self.assertEqual(r.status_code, 503)
+        start.assert_not_called()
+
+
+class ConfirmerCoordsTests(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch.object(nav, "parse_trip_info",
+                                    lambda raw: raw)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @staticmethod
+    def route(name, lat=34.0, lon=-118.0, chargers=()):
+        return {"destinations": [{"name": name, "lat": lat,
+                                  "lon": lon, "place_id": None}],
+                "chargers": list(chargers)}
+
+    def test_no_baseline_coords_do_not_confirm(self):
+        # Without a baseline, a coords match cannot distinguish "our
+        # send landed" from "the car was already going nearby": the
+        # stale nearby route adopts as the baseline instead of
+        # confirming. Only a new route to the sent coordinates can
+        # confirm after that.
+        c = nav._Confirmer(None, "test street",
+                           want_coords=(34.0, -118.0))
+        self.assertFalse(c.check(self.route("Business Name",
+                                            34.001, -118.0)))
+        self.assertTrue(c.check(self.route("Other Name",
+                                           34.0, -118.0)))
+
+    def test_no_baseline_different_coords_becomes_baseline(self):
+        c = nav._Confirmer(None, "test street",
+                           want_coords=(34.0, -118.0))
+        self.assertFalse(c.check(self.route("Elsewhere",
+                                            35.0, -119.0)))
+
+    def test_baseline_coords_confirm_when_plan_changed(self):
+        c = nav._Confirmer(self.route("Home", 34.1, -118.1),
+                           "test street", want_coords=(34.0, -118.0))
+        self.assertTrue(c.check(self.route("Business Name",
+                                           34.0, -118.0)))
+
+    def test_baseline_identical_report_does_not_confirm_via_coords(self):
+        base = self.route("Test Street", 34.0, -118.0)
+        c = nav._Confirmer(base, "test street",
+                           want_coords=(34.0, -118.0))
+        self.assertFalse(c.check(self.route("Test Street",
+                                            34.0, -118.0)))
+
+    def test_nearby_but_wrong_destination_does_not_confirm(self):
+        c = nav._Confirmer(self.route("Home", 34.1, -118.1),
+                           "test street", want_coords=(34.0, -118.0))
+        self.assertFalse(c.check(self.route("Wrong Place",
+                                            34.004, -118.0)))
+        self.assertTrue(c.check(self.route("Business Name",
+                                           34.001, -118.0)))
+
+    def test_no_coords_means_name_matching_only(self):
+        c = nav._Confirmer(None, "test street")
+        self.assertFalse(c.check(self.route("Business Name",
+                                            34.0, -118.0)))
+
+    @staticmethod
+    def multi_route(stops):
+        return {"destinations": [{"name": n, "lat": la, "lon": lo,
+                                  "place_id": None}
+                                 for n, la, lo in stops],
+                "chargers": []}
+
+    def test_multistop_intermediate_near_final_elsewhere_does_not_confirm(self):
+        # A foreign multi-stop route passing near the sent place on
+        # its way elsewhere must not confirm: for a one-way send
+        # only the final destination counts.
+        c = nav._Confirmer(self.route("Home", 34.1, -118.1),
+                           "test street", want_coords=(34.0, -118.0))
+        self.assertFalse(c.check(self.multi_route([
+            ("Near Stop", 34.001, -118.0),
+            ("Elsewhere", 35.0, -119.0)])))
+
+    def test_multistop_ending_at_coords_confirms(self):
+        # Positive control: a multi-stop route that ends at the
+        # sent coordinates is going to the sent place.
+        c = nav._Confirmer(self.route("Home", 34.1, -118.1),
+                           "test street", want_coords=(34.0, -118.0))
+        self.assertTrue(c.check(self.multi_route([
+            ("Elsewhere", 35.0, -119.0),
+            ("Business Name", 34.001, -118.0)])))
+
+    def test_round_trip_first_stop_coords_confirms(self):
+        c = nav._Confirmer(self.route("Home", 34.1, -118.1),
+                           "test street", home="home",
+                           want_coords=(34.0, -118.0))
+        self.assertTrue(c.check(self.multi_route([
+            ("Business Name", 34.001, -118.0),
+            ("Home", 34.1, -118.1)])))
+
+    def test_round_trip_single_leg_coords_confirms(self):
+        # The car may report only the current leg while driving to
+        # the place; the home leg need not be in the report yet for
+        # the first stop to confirm.
+        c = nav._Confirmer(self.route("Home", 34.1, -118.1),
+                           "test street", home="home",
+                           want_coords=(34.0, -118.0))
+        self.assertTrue(c.check(self.multi_route([
+            ("Business Name", 34.001, -118.0)])))
+
+    def test_round_trip_intermediate_near_does_not_confirm(self):
+        # A route passing near the place on its way elsewhere, even
+        # with a home leg, is not the round trip that was sent: the
+        # stop after the place must be home.
+        c = nav._Confirmer(self.route("Home", 34.1, -118.1),
+                           "test street", home="home",
+                           want_coords=(34.0, -118.0))
+        self.assertFalse(c.check(self.multi_route([
+            ("Near Stop", 34.001, -118.0),
+            ("Elsewhere", 35.0, -119.0),
+            ("Home", 34.1, -118.1)])))
+
+    def test_round_trip_trailing_destination_does_not_confirm(self):
+        # A route that visits the place and then home but continues
+        # elsewhere does not end at home, so it is not the round
+        # trip that was sent. The reported name differs from the
+        # sent name, so this depends on coordinates, not names.
+        c = nav._Confirmer(self.route("Home", 34.1, -118.1),
+                           "test street", home="home",
+                           want_coords=(34.0, -118.0))
+        self.assertFalse(c.check(self.multi_route([
+            ("Other Name", 34.001, -118.0),
+            ("Home", 34.1, -118.1),
+            ("Elsewhere", 35.0, -119.0)])))
+
+
+class _FakeResp:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def read(self):
+        return self._payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class SearchPlacesTests(unittest.TestCase):
+    ROWS = [
+        {"lat": "34.05", "lon": "-118.25",
+         "display_name": "123, Test Street, Testville, California,"
+                         " 90000, United States"},
+        {"lat": "34.06", "lon": "-118.26", "name": "Test Cafe",
+         "display_name": "Test Cafe, 123 Test Street, Testville,"
+                         " California, 90000, United States"},
+    ]
+
+    def setUp(self):
+        payload = json.dumps(self.ROWS).encode("utf-8")
+        patcher = mock.patch.object(nav.urllib.request, "urlopen",
+                                    return_value=_FakeResp(payload))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self._orig_last = nav._last_search
+        nav._last_search = 0.0
+        self.addCleanup(setattr, nav, "_last_search", self._orig_last)
+
+    def test_address_row_uses_full_display_as_name(self):
+        results = nav.search_places("123 test street")
+        self.assertEqual(results[0]["name"], self.ROWS[0]["display_name"])
+        self.assertIsNone(results[0]["place_id"])
+        self.assertEqual((results[0]["lat"], results[0]["lon"]),
+                         (34.05, -118.25))
+
+    def test_named_row_keeps_its_name(self):
+        results = nav.search_places("test cafe")
+        self.assertEqual(results[1]["name"], "Test Cafe")
+        self.assertIsNone(results[1]["place_id"])
+
+
+class SendJobSentTests(unittest.TestCase):
+    def _wait_until_not_sending(self, job_id, timeout=2.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if nav._JOBS[job_id]["state"] != "sending":
+                return nav._JOBS[job_id]
+            time.sleep(0.05)
+        return nav._JOBS[job_id]
+
+    def test_cloud_accepted_unconfirmed_send_reports_sent(self):
+        async def fake(place, mode, round_trip, home, origin, job):
+            job["cloud_accepted"] = True
+            return None
+
+        with mock.patch.dict(nav._JOBS, {}), \
+                mock.patch.object(nav, "_send_and_confirm_async", fake):
+            job_id = nav.start_send_job(
+                {"name": "B", "lat": 34.1, "lon": -118.1},
+                "trip", False, None, {"lat": 34.0, "lon": -118.0})
+            job = self._wait_until_not_sending(job_id)
+        self.assertEqual(job["state"], "sent")
+        self.assertIsNone(job["error"])
+
+    def test_unaccepted_send_reports_failed(self):
+        async def fake(place, mode, round_trip, home, origin, job):
+            return None
+
+        with mock.patch.dict(nav._JOBS, {}), \
+                mock.patch.object(nav, "_send_and_confirm_async", fake):
+            job_id = nav.start_send_job(
+                {"name": "B", "lat": 34.1, "lon": -118.1},
+                "trip", False, None, {"lat": 34.0, "lon": -118.0})
+            job = self._wait_until_not_sending(job_id)
+        self.assertEqual(job["state"], "failed")
+        self.assertEqual(job["error"],
+                         "The car never confirmed the route. "
+                         "It may not have received the send.")
+
+
+    def test_accepted_then_error_reports_sent(self):
+        async def fake(place, mode, round_trip, home, origin, job):
+            job["cloud_accepted"] = True
+            raise RuntimeError("retry failed")
+
+        with mock.patch.dict(nav._JOBS, {}), \
+                mock.patch.object(nav, "_send_and_confirm_async", fake):
+            job_id = nav.start_send_job(
+                {"name": "B", "lat": 34.1, "lon": -118.1},
+                "trip", False, None, {"lat": 34.0, "lon": -118.0})
+            job = self._wait_until_not_sending(job_id)
+        self.assertEqual(job["state"], "sent")
+        self.assertIsNone(job["error"])
+
+    def test_unaccepted_error_reports_failed(self):
+        async def fake(place, mode, round_trip, home, origin, job):
+            raise RuntimeError("cloud rejected")
+
+        with mock.patch.dict(nav._JOBS, {}), \
+                mock.patch.object(nav, "_send_and_confirm_async", fake):
+            job_id = nav.start_send_job(
+                {"name": "B", "lat": 34.1, "lon": -118.1},
+                "trip", False, None, {"lat": 34.0, "lon": -118.0})
+            job = self._wait_until_not_sending(job_id)
+        self.assertEqual(job["state"], "failed")
+        self.assertEqual(job["error"], "cloud rejected")
+
+
+class JsSentTests(unittest.TestCase):
+    def test_sent_message_is_wired(self):
+        js = (Path(__file__).parent.parent / "static" /
+              "dashboard.js").read_text(encoding="utf-8")
+        self.assertIn("Sent. Verify in the car app.", js)
+
+    def test_failed_branch_precedes_sent_branch(self):
+        js = (Path(__file__).parent.parent / "static" /
+              "dashboard.js").read_text(encoding="utf-8")
+        failed = js.index("} else if (job.state === 'failed') {")
+        sent = js.index(
+            "} else if (job.state === 'sent' || job.cloud_accepted) {")
+        self.assertLess(failed, sent)
+
+    def test_fetch_failure_guard_tracks_acceptance(self):
+        js = (Path(__file__).parent.parent / "static" /
+              "dashboard.js").read_text(encoding="utf-8")
+        self.assertIn("accepted = true;", js)
+        self.assertIn("!accepted", js)
 
 
 if __name__ == "__main__":

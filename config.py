@@ -43,7 +43,7 @@ VEHICLE_MODEL = os.environ.get("RIVIAN_VEHICLE_MODEL", "")
 LOCAL_TZ = ZoneInfo(os.environ.get("WATTSON_TIMEZONE",
                                   "America/Los_Angeles"))
 # Canonical public origin for CSRF origin checks (e.g.
-# "https://sonic.givemeasec.com"). When set, it is authoritative: the
+# "https://dashboard.example.com"). When set, it is authoritative: the
 # check compares against it, not against the request's Host, so the
 # public scheme never needs to be reconstructed from proxy headers.
 # Leave unset for local-only use, where the request itself is the origin.

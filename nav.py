@@ -512,8 +512,10 @@ class _Confirmer:
         # place on its way elsewhere must not confirm. One-way
         # sends are single-stop, so the final destination is the
         # sent place. Round-trip sends put the place first and home
-        # last, so the first stop is the sent place and the next
-        # stop (if the car reports one) must be home.
+        # last, so the first stop is the sent place and the route
+        # must end at home: a single reported leg is the car still
+        # driving to the place, but any destination after home
+        # means the car's actual final destination is elsewhere.
         if not self._want_coords:
             return False
         dests = route.get("destinations") or []
@@ -531,7 +533,7 @@ class _Confirmer:
                 return False
             if len(dests) == 1:
                 return True
-            return self._name_match(
+            return len(dests) == 2 and self._name_match(
                 self._home,
                 (dests[1].get("name") or "").strip().lower())
         return close(dests[-1])

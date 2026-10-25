@@ -633,6 +633,19 @@ class ConfirmerCoordsTests(unittest.TestCase):
             ("Elsewhere", 35.0, -119.0),
             ("Home", 34.1, -118.1)])))
 
+    def test_round_trip_trailing_destination_does_not_confirm(self):
+        # A route that visits the place and then home but continues
+        # elsewhere does not end at home, so it is not the round
+        # trip that was sent. The reported name differs from the
+        # sent name, so this depends on coordinates, not names.
+        c = nav._Confirmer(self.route("Home", 34.1, -118.1),
+                           "test street", home="home",
+                           want_coords=(34.0, -118.0))
+        self.assertFalse(c.check(self.multi_route([
+            ("Other Name", 34.001, -118.0),
+            ("Home", 34.1, -118.1),
+            ("Elsewhere", 35.0, -119.0)])))
+
 
 class _FakeResp:
     def __init__(self, payload):

@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Added
+- Send destination: the dashboard now refuses a send while the car
+  is already navigating somewhere else, and offers Send anyway to
+  override. A place counts as the same destination when its name
+  matches or its coordinates are within half a mile, and the check
+  fails open, so a send is never blocked by a check that could not
+  run.
+### Fixed
+- Send destination: an address from search is now sent as a trip
+  instead of a bare link, so it becomes a route in the car. A shared
+  coordinate link is accepted by the cloud but the car cannot
+  resolve it into a place, which used to leave the send looking
+  failed while the car kept its previous route.
+- Send destination: the modal now reports Sent as soon as the cloud
+  accepts a send, instead of only confirmed or failed, and keeps
+  watching for the car's own route report to upgrade it to
+  confirmed. The Send button also re-enables on every terminal
+  state, including the modal timeout.
+- Send destination: search results without a business name now show
+  the full address as the row title instead of a blank.
+- Send destination: route confirmation now matches the sent place
+  against the correct leg of a multi-stop route (the final
+  destination one way, the first stop on a round trip, which must
+  also end at home), so a route passing near the sent place on its
+  way elsewhere can no longer confirm a send by accident.
+  Confirmation radius tightened to 0.1 miles.
+- PII scan: the workflow scan is green again. Its example origin
+  in config.py used a real dashboard host; replaced with a generic
+  placeholder.
+
 ## [0.9.1] - 2026-10-23
 ### Fixed
 - Phantom drain hero tile: now headlines the last completed park's

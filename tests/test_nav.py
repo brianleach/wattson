@@ -577,6 +577,62 @@ class ConfirmerCoordsTests(unittest.TestCase):
         self.assertFalse(c.check(self.route("Business Name",
                                             34.0, -118.0)))
 
+    @staticmethod
+    def multi_route(stops):
+        return {"destinations": [{"name": n, "lat": la, "lon": lo,
+                                  "place_id": None}
+                                 for n, la, lo in stops],
+                "chargers": []}
+
+    def test_multistop_intermediate_near_final_elsewhere_does_not_confirm(self):
+        # A foreign multi-stop route passing near the sent place on
+        # its way elsewhere must not confirm: for a one-way send
+        # only the final destination counts.
+        c = nav._Confirmer(self.route("Home", 34.1, -118.1),
+                           "test street", want_coords=(34.0, -118.0))
+        self.assertFalse(c.check(self.multi_route([
+            ("Near Stop", 34.001, -118.0),
+            ("Elsewhere", 35.0, -119.0)])))
+
+    def test_multistop_ending_at_coords_confirms(self):
+        # Positive control: a multi-stop route that ends at the
+        # sent coordinates is going to the sent place.
+        c = nav._Confirmer(self.route("Home", 34.1, -118.1),
+                           "test street", want_coords=(34.0, -118.0))
+        self.assertTrue(c.check(self.multi_route([
+            ("Elsewhere", 35.0, -119.0),
+            ("Business Name", 34.001, -118.0)])))
+
+    def test_round_trip_first_stop_coords_confirms(self):
+        c = nav._Confirmer(self.route("Home", 34.1, -118.1),
+                           "test street", home="home",
+                           want_coords=(34.0, -118.0))
+        self.assertTrue(c.check(self.multi_route([
+            ("Business Name", 34.001, -118.0),
+            ("Home", 34.1, -118.1)])))
+
+    def test_round_trip_single_leg_coords_confirms(self):
+        # The car may report only the current leg while driving to
+        # the place; the home leg need not be in the report yet for
+        # the first stop to confirm.
+        c = nav._Confirmer(self.route("Home", 34.1, -118.1),
+                           "test street", home="home",
+                           want_coords=(34.0, -118.0))
+        self.assertTrue(c.check(self.multi_route([
+            ("Business Name", 34.001, -118.0)])))
+
+    def test_round_trip_intermediate_near_does_not_confirm(self):
+        # A route passing near the place on its way elsewhere, even
+        # with a home leg, is not the round trip that was sent: the
+        # stop after the place must be home.
+        c = nav._Confirmer(self.route("Home", 34.1, -118.1),
+                           "test street", home="home",
+                           want_coords=(34.0, -118.0))
+        self.assertFalse(c.check(self.multi_route([
+            ("Near Stop", 34.001, -118.0),
+            ("Elsewhere", 35.0, -119.0),
+            ("Home", 34.1, -118.1)])))
+
 
 class _FakeResp:
     def __init__(self, payload):

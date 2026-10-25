@@ -504,20 +504,37 @@ class _Confirmer:
         return any(self._matches(n) for n in names if n)
 
     def _coords_match(self, route) -> bool:
-        # A destination within a tenth of a mile of the sent
-        # coordinates counts as the same place. Link sends carry no
-        # coordinates, so this stays off for them and name matching
-        # is unchanged there.
+        # A destination at the sent place's expected position within
+        # a tenth of a mile counts as the same place. Link sends
+        # carry no coordinates, so this stays off for them and name
+        # matching is unchanged there. Only the expected position
+        # counts: a foreign multi-stop route passing near the sent
+        # place on its way elsewhere must not confirm. One-way
+        # sends are single-stop, so the final destination is the
+        # sent place. Round-trip sends put the place first and home
+        # last, so the first stop is the sent place and the next
+        # stop (if the car reports one) must be home.
         if not self._want_coords:
             return False
+        dests = route.get("destinations") or []
+        if not dests:
+            return False
         wlat, wlon = self._want_coords
-        for d in (route.get("destinations") or []):
+
+        def close(d):
             lat, lon = d.get("lat"), d.get("lon")
-            if lat is None or lon is None:
-                continue
-            if haversine_mi(wlat, wlon, lat, lon) <= 0.1:
+            return lat is not None and lon is not None and \
+                haversine_mi(wlat, wlon, lat, lon) <= 0.1
+
+        if self._home:
+            if not close(dests[0]):
+                return False
+            if len(dests) == 1:
                 return True
-        return False
+            return self._name_match(
+                self._home,
+                (dests[1].get("name") or "").strip().lower())
+        return close(dests[-1])
 
     def _home_ok(self, names) -> bool:
         # A round trip counts as confirmed only by a route that

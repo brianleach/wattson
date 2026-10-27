@@ -111,25 +111,48 @@ segToggle('trendseg', 'trend');
 })();
 
 /* Charging log: rows past the first page ship hidden; "Show earlier"
-   reveals the next page with the same staggered entrance as Daily activity. */
+   reveals the next page with the same staggered entrance as Daily activity,
+   and the AC/DC filter restarts paging over just its matching rows. */
 (function () {
   var listEl = document.getElementById('chglist');
+  if (!listEl) return;
   var moreBtn = document.getElementById('chgshowmore');
-  if (!listEl || !moreBtn) return;
-  var PAGE = Number(listEl.dataset.page);
-  moreBtn.addEventListener('click', function () {
-    var rest = listEl.querySelectorAll('details.chargerow[hidden]');
-    var n = Math.min(PAGE, rest.length), i;
-    for (i = 0; i < n; i++) {
-      rest[i].hidden = false;
-      if (prefersReducedMotion()) continue;
-      rest[i].animate(
+  var filterEl = document.getElementById('chgfilter');
+  var rows = Array.prototype.slice.call(
+    listEl.querySelectorAll('details.chargerow'));
+  var PAGE = Number(listEl.dataset.page), shown = PAGE, filter = 'all';
+  function apply(animate) {
+    var matched = 0, fresh = [];
+    rows.forEach(function (r) {
+      var match = filter === 'all' || r.dataset.type === filter;
+      var show = match && matched < shown;
+      if (match) matched++;
+      if (show && r.hidden) fresh.push(r);
+      r.hidden = !show;
+    });
+    if (moreBtn) moreBtn.hidden = matched <= shown;
+    if (!animate || prefersReducedMotion()) return;
+    fresh.forEach(function (r, i) {
+      r.animate(
         [{opacity: 0, transform: 'translateY(14px)'},
          {opacity: 1, transform: 'translateY(0)'}],
         {duration: 340, delay: i * 60, easing: 'cubic-bezier(0.4,0,0.2,1)',
          fill: 'backwards'});
-    }
-    moreBtn.hidden = rest.length <= PAGE;
+    });
+  }
+  if (moreBtn) moreBtn.addEventListener('click', function () {
+    shown += PAGE;
+    apply(true);
+  });
+  if (filterEl) filterEl.querySelectorAll('button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      filterEl.querySelectorAll('button')
+        .forEach(function (x) { x.classList.remove('on'); });
+      b.classList.add('on');
+      filter = b.dataset.f;
+      shown = PAGE;
+      apply(false);
+    });
   });
 })();
 

@@ -1381,19 +1381,29 @@ def _charges_html(charges: list[dict], backfill: list[dict],
         parts.append(_live_charge_html(live, live_is_home))
     if hist or backfill:
         scale = max((ch["kwh_added"] for ch in hist), default=0) * 1.15 or 1.0
-        rows = [(c["start_ts"], _charge_row_html(c, scale, open_=(i == 0),
-                                                 eff=eff))
+        rows = [(c["start_ts"],
+                 "dc" if "dc" in (c.get("charge_type") or "").lower()
+                 else "ac",
+                 _charge_row_html(c, scale, open_=(i == 0), eff=eff))
                 for i, c in enumerate(hist)]
-        rows += [(b["start_ts"], _backfill_row_html(b)) for b in backfill]
+        rows += [(b["start_ts"], "dc" if b["is_dc"] else "ac",
+                  _backfill_row_html(b)) for b in backfill]
         rows.sort(key=lambda r: r[0], reverse=True)
         # Same paging as Daily activity: the latest CHARGE_LOG_PAGE rows
-        # show, "Show earlier" reveals the next page (dashboard.js).
+        # show, "Show earlier" reveals the next page, and the AC/DC
+        # filter pages through its matches the same way (dashboard.js).
         rows_html = "".join(
-            html if i < CHARGE_LOG_PAGE
-            else html.replace("<details ", "<details hidden ", 1)
-            for i, (_, html) in enumerate(rows))
+            html.replace("<details ", f'<details data-type="{kind}"'
+                         + (" " if i < CHARGE_LOG_PAGE else " hidden "), 1)
+            for i, (_, kind, html) in enumerate(rows))
         more = ('<button id="chgshowmore" class="showmore">Show earlier'
                 '</button>' if len(rows) > CHARGE_LOG_PAGE else "")
+        kinds = {kind for _, kind, _ in rows}
+        chg_filter = ('<div class="seg" id="chgfilter">'
+                      '<button class="on" data-f="all">All</button>'
+                      '<button data-f="ac">AC</button>'
+                      '<button data-f="dc">DC fast</button></div>'
+                      if kinds == {"ac", "dc"} else "")
         summary = _charge_month_summary(
             hist + [{"start_ts": b["start_ts"], "kwh_added": b["kwh"],
                      "miles_added": b["miles"]} for b in backfill])
@@ -1403,7 +1413,7 @@ def _charges_html(charges: list[dict], backfill: list[dict],
         parts.append(
             f'<div class="card"><h3 class="row"><span>Charging log</span>'
             f'{export}</h3>'
-            f'{summary}'
+            f'{summary}{chg_filter}'
             f'<div id="chglist" data-page="{CHARGE_LOG_PAGE}">{rows_html}'
             f'</div>{more}</div>')
     footnote = ('<p class="note">Home charging costed at $%.2f/kWh '

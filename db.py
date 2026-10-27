@@ -233,14 +233,6 @@ def init():
             "SELECT value FROM meta WHERE key = 'charge_prices_backfill'"
         ).fetchone()
         if marker is None or marker[0] != "1":
-            # Before charge_prices existed, prices pulled from Rivian were
-            # written onto charges too. Drop those so the backfill below
-            # doesn't freeze them as manual entries.
-            for cid, (_, rate) in _rivian_rates(con).items():
-                con.execute(
-                    "UPDATE charges SET user_cost_per_kwh = NULL"
-                    " WHERE id = ? AND abs(user_cost_per_kwh - ?) < 1e-9",
-                    (cid, rate))
             con.execute(
                 "INSERT OR IGNORE INTO charge_prices"
                 " (start_ts, user_cost_per_kwh, updated_ts)"
@@ -452,27 +444,27 @@ def _rivian_rates(con) -> dict[int, tuple[int, float]]:
         "SELECT start_ts, end_ts, paid_total FROM rivian_sessions"
         " WHERE paid_total IS NOT NULL AND currency = 'USD'").fetchall()
     charges = con.execute(
-        "SELECT id, start_ts, end_ts, kwh_added"
-        " FROM charges WHERE lower(charge_type) LIKE '%dc%'").fetchall()
+        "SELECT id, start_ts, end_ts, kwh_added FROM charges"
+        " WHERE lower(charge_type) LIKE '%dc%' AND kwh_added > 0").fetchall()
     pairs = []
     for ri, (p_start, p_end, _) in enumerate(paid):
         for c in charges:
             overlap = min(p_end, c[2]) - max(p_start, c[1])
             if overlap > 0:
                 pairs.append((overlap, ri, c))
-    used_paid, matched = set(), {}
+    used_paid, rates = set(), {}
     for _, ri, (cid, start_ts, _, kwh) in sorted(
             pairs, key=lambda p: p[0], reverse=True):
-        if ri in used_paid or cid in matched:
+        if ri in used_paid or cid in rates:
             continue
         used_paid.add(ri)
-        matched[cid] = (start_ts, paid[ri][2], kwh or 0)
-    return {cid: (ts, total / kwh)
-            for cid, (ts, total, kwh) in matched.items() if kwh > 0}
+        rates[cid] = (start_ts, paid[ri][2] / kwh)
+    return rates
 
 
-def latest_unpriced_dc_end(since: int) -> int | None:
-    """End time of the newest unpriced DC charge that ended after ``since``."""
+def latest_unpriced_dc_end(since: int, until: int) -> int | None:
+    """End time of the newest unpriced DC charge that ended in
+    (``since``, ``until``]."""
     with connect() as con:
         rows = con.execute(
             "SELECT start_ts, end_ts, charge_type, kwh_added FROM charges"
@@ -480,7 +472,8 @@ def latest_unpriced_dc_end(since: int) -> int | None:
         prices, _, _ = charge_price_info(con, [r["start_ts"] for r in rows])
     return max((r["end_ts"] for r in rows
                 if "dc" in (r["charge_type"] or "").lower()
-                and (r["kwh_added"] or 0) > 0 and r["end_ts"] > since
+                and (r["kwh_added"] or 0) > 0
+                and since < r["end_ts"] <= until
                 and r["start_ts"] not in prices), default=None)
 
 

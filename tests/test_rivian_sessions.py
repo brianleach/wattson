@@ -172,6 +172,13 @@ class ApplyTests(DbTestCase):
         db.upsert_rivian_sessions([stored()])
         self.assertEqual(self.costs(), [None])
 
+    def test_charge_without_kwh_does_not_use_up_the_session(self):
+        # The empty charge overlaps more, but can't take the payment.
+        self.derive(charge(start_ts=T, end_ts=T + 1600, kwh_added=0),
+                    charge(start_ts=T + 1500, end_ts=T + 2400))
+        db.upsert_rivian_sessions([stored()])
+        self.assertAlmostEqual(self.costs()[1], 33.72 / 51.77)
+
     def test_adjacent_charge_without_overlap_not_matched(self):
         self.derive(charge(start_ts=T + 1680, end_ts=T + 3000))
         db.upsert_rivian_sessions([stored()])
@@ -218,41 +225,6 @@ class PriceSourceTests(DbTestCase):
         self.derive(charge(), charge(end_ts=T + 900))
         db.upsert_rivian_sessions([stored()])
         self.assertEqual(self.costs(), [None, None])
-
-
-class LegacyColumnMigrationTests(unittest.TestCase):
-    """A DB from before charge_prices, with Rivian prices on charges."""
-
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        patcher = mock.patch.object(db, "DB_PATH",
-                                    Path(self.tmp.name) / "test.db")
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        db.init()
-        db.rebuild_derived([], [], [charge(),
-                                    charge(start_ts=T + 5000,
-                                           end_ts=T + 6000)])
-        db.upsert_rivian_sessions([
-            stored(),
-            stored(transaction_id="synthetic-txn-0002", start_ts=T + 5000,
-                   end_ts=T + 6000, paid_total=30.0)])
-        with db.connect() as con:
-            con.execute("DELETE FROM meta")
-            con.execute("UPDATE charges SET user_cost_per_kwh = ?"
-                        " WHERE start_ts = ?", (33.72 / 51.77, T + 100))
-            # Typed in by hand, close to but not Rivian's exact rate.
-            con.execute("UPDATE charges SET user_cost_per_kwh = 0.58"
-                        " WHERE start_ts = ?", (T + 5000,))
-
-    def test_rivian_price_not_backfilled_as_manual(self):
-        db.init()
-        with db.connect() as con:
-            manual = con.execute(
-                "SELECT start_ts, user_cost_per_kwh FROM charge_prices"
-                " ORDER BY start_ts").fetchall()
-        self.assertEqual([tuple(r) for r in manual], [(T + 5000, 0.58)])
 
 
 class UnmatchedSessionTests(DbTestCase):
@@ -400,29 +372,33 @@ class LifetimeMilesTests(unittest.TestCase):
 class LatestUnpricedDcEndTests(DbTestCase):
     def test_unpriced_dc_charge(self):
         self.derive(charge())
-        self.assertEqual(db.latest_unpriced_dc_end(T), T + 1700)
+        self.assertEqual(db.latest_unpriced_dc_end(T, T + 1700), T + 1700)
 
     def test_charge_ended_before_window(self):
         self.derive(charge())
-        self.assertIsNone(db.latest_unpriced_dc_end(T + 1700))
+        self.assertIsNone(db.latest_unpriced_dc_end(T + 1700, T + 10_000))
 
     def test_priced_dc_charge(self):
         self.derive(charge())
         self.set_cost(T + 100, 0.5)
-        self.assertIsNone(db.latest_unpriced_dc_end(T))
+        self.assertIsNone(db.latest_unpriced_dc_end(T, T + 10_000))
 
     def test_dc_charge_without_kwh(self):
         self.derive(charge(kwh_added=0))
-        self.assertIsNone(db.latest_unpriced_dc_end(T))
+        self.assertIsNone(db.latest_unpriced_dc_end(T, T + 10_000))
 
     def test_ac_charge(self):
         self.derive(charge(charge_type="AC"))
-        self.assertIsNone(db.latest_unpriced_dc_end(T))
+        self.assertIsNone(db.latest_unpriced_dc_end(T, T + 10_000))
+
+    def test_charge_still_settling(self):
+        self.derive(charge())
+        self.assertIsNone(db.latest_unpriced_dc_end(T, T + 1699))
 
 
 class SyncTests(DbTestCase):
     CHARGE_END = T + 1700
-    NOW = CHARGE_END + 120
+    NOW = CHARGE_END + poller.SESSION_SETTLE_SECONDS
 
     def setUp(self):
         super().setUp()
@@ -449,7 +425,21 @@ class SyncTests(DbTestCase):
         self.sync({}, fetch)
         fetch.assert_called_once()
 
-    def test_new_charge_synced_right_after_it_ends(self):
+    def test_charge_in_progress_not_synced(self):
+        # A live charge is already a row; its end is the newest poll.
+        fetch = mock.Mock(return_value=[])
+        self.sync({"last_rivian_sync": self.CHARGE_END - 600}, fetch,
+                  now=self.CHARGE_END + 120)
+        fetch.assert_not_called()
+
+    def test_daily_full_sync_without_unpriced_charge(self):
+        self.set_cost(T + 100, 0.5)
+        fetch = mock.Mock(return_value=[])
+        self.sync({"last_rivian_sync": self.NOW}, fetch,
+                  now=self.NOW + poller.FULL_SYNC_SECONDS)
+        fetch.assert_called_once()
+
+    def test_new_charge_synced_once_it_settles(self):
         state = {"last_rivian_sync": self.CHARGE_END - 600}
         self.sync(state, mock.Mock(return_value=[stored()]))
         self.assertAlmostEqual(self.costs()[0], 33.72 / 51.77)
@@ -471,8 +461,8 @@ class SyncTests(DbTestCase):
     def test_charge_older_than_window_not_synced(self):
         fetch = mock.Mock(return_value=[])
         now = self.CHARGE_END + poller.SESSION_WINDOW_SECONDS
-        self.sync({"last_rivian_sync": self.CHARGE_END - 600}, fetch,
-                  now=now)
+        self.sync({"last_rivian_sync": now - poller.SESSION_RETRY_SECONDS},
+                  fetch, now=now)
         fetch.assert_not_called()
 
     def test_skipped_without_unpriced_dc_charge(self):

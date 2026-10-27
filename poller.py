@@ -37,11 +37,15 @@ from analyze import DRIVE_GEARS, haversine_mi
 
 
 MOVE_GPS_MI = 0.06  # ~100 m; parked GPS jitter stays well under this
-# Rivian has the receipt by the time a session ends, so one fetch right after
-# a DC charge appears normally prices it. Retries are hourly, and a charge
-# still unpriced after a day is one Rivian won't price.
+# Rivian has the receipt once a session ends, so one fetch after a DC charge
+# settles normally prices it. A charge in progress is already a row whose end
+# keeps moving, so it only counts once it has been still for SETTLE. Retries
+# are hourly, and a charge still unpriced after a day is one Rivian won't
+# price. A full sync at least daily picks up sessions Wattson never saw.
+SESSION_SETTLE_SECONDS = 10 * 60
 SESSION_RETRY_SECONDS = 60 * 60
 SESSION_WINDOW_SECONDS = 24 * 60 * 60
+FULL_SYNC_SECONDS = 24 * 60 * 60
 
 
 def _require_home() -> None:
@@ -94,17 +98,18 @@ def save_state(state: dict) -> None:
 def sync_rivian_sessions(state: dict, now: int) -> None:
     """Store Rivian's charging history and price unpriced DC charges from it.
 
-    The first sync ever runs unconditionally to backfill history. After
-    that, a DC charge that ended since the last sync is fetched for at
-    once, and one still unpriced is retried at most hourly. Saves the
+    Syncs when none has run for a day (the first ever included), and when
+    a DC charge that ended since the last sync has settled; one still
+    unpriced is retried at most hourly. Saves the
     attempt time into ``state`` before fetching, so a failing endpoint
     waits for the retry window too. Never raises: this is a nicety and
     must not break polling.
     """
     last = state.get("last_rivian_sync")
     try:
-        if last is not None:
-            newest = latest_unpriced_dc_end(now - SESSION_WINDOW_SECONDS)
+        if last is not None and now - last < FULL_SYNC_SECONDS:
+            newest = latest_unpriced_dc_end(now - SESSION_WINDOW_SECONDS,
+                                            now - SESSION_SETTLE_SECONDS)
             if newest is None:
                 return
             if newest <= last and now - last < SESSION_RETRY_SECONDS:

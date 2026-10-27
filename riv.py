@@ -22,7 +22,7 @@ _rivmod.TEMPLATE_MAP["gnssLocation"] = "{ latitude longitude timeStamp }"
 
 CHARGE_SESSIONS_QUERY = (
     "query getCompletedSessionSummaries { getCompletedSessionSummaries {"
-    " chargerType currencyCode paidTotal startInstant endInstant"
+    " currencyCode paidTotal startInstant endInstant"
     " totalEnergyKwh rangeAddedKm city transactionId vendor isPublic"
     " isHomeCharger } }")
 

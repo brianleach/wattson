@@ -207,6 +207,11 @@ isn't there yet it retries hourly for a day, then gives up. DC charges
 Rivian doesn't price (some third-party networks, free sessions) are
 excluded until you record what you paid.
 
+Sessions Wattson never saw, like ones from before you set it up, are
+filled in from the same Rivian history and marked "from Rivian" in the
+charging log and savings table. Home ones are costed at your home rate;
+public ones at what Rivian billed.
+
 To record or override a DC price, click **? add cost** (or **edit**) on the
 charging-log row. A small form saves the $/kWh rate and regenerates the
 dashboard. A price you enter is never overwritten by Rivian's. Entering

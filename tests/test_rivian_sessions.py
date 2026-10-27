@@ -1,6 +1,8 @@
 import asyncio
 import calendar
 import json
+import os
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +10,7 @@ from unittest import mock
 
 import db
 import poller
+import report
 import riv
 
 T = 1790000000
@@ -250,6 +253,148 @@ class LegacyColumnMigrationTests(unittest.TestCase):
                 "SELECT start_ts, user_cost_per_kwh FROM charge_prices"
                 " ORDER BY start_ts").fetchall()
         self.assertEqual([tuple(r) for r in manual], [(T + 5000, 0.58)])
+
+
+class UnmatchedSessionTests(DbTestCase):
+    def ids(self):
+        return [r["transaction_id"] for r in db.unmatched_rivian_sessions()]
+
+    def test_session_overlapping_no_charge(self):
+        self.derive(charge(start_ts=T + 5000, end_ts=T + 6000))
+        db.upsert_rivian_sessions([stored()])
+        self.assertEqual(self.ids(), [SESSION_ID])
+
+    def test_session_overlapping_ac_charge_is_matched(self):
+        self.derive(charge(charge_type="AC"))
+        db.upsert_rivian_sessions([stored()])
+        self.assertEqual(self.ids(), [])
+
+    def test_touching_charge_does_not_match(self):
+        self.derive(charge(start_ts=T + 1680, end_ts=T + 3000))
+        db.upsert_rivian_sessions([stored()])
+        self.assertEqual(self.ids(), [SESSION_ID])
+
+
+def session_row(**overrides):
+    row = stored()
+    row.update(overrides)
+    return row
+
+
+class BackfillCostTests(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch.object(report, "HOME_KWH_RATE", 0.10)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_public_session_costs_what_was_paid(self):
+        b = report._backfill_cost(session_row(), 3.0)
+        self.assertEqual(b["ev_cost"], 33.72)
+        self.assertTrue(b["is_dc"])
+        self.assertAlmostEqual(b["miles"], 250.0 * report.MI_PER_KM)
+
+    def test_home_charger_costs_home_rate(self):
+        b = report._backfill_cost(session_row(
+            kwh=10.0, paid_total=None, currency=None, is_home=True,
+            is_public=None), 3.0)
+        self.assertAlmostEqual(b["ev_cost"], 1.0)
+        self.assertFalse(b["is_dc"])
+
+    def test_unpaid_private_session_counts_as_home(self):
+        b = report._backfill_cost(session_row(
+            kwh=10.0, paid_total=None, currency=None, is_home=None,
+            is_public=None), 3.0)
+        self.assertAlmostEqual(b["ev_cost"], 1.0)
+
+    def test_home_session_without_kwh_skipped(self):
+        self.assertIsNone(report._backfill_cost(session_row(
+            kwh=0, paid_total=None, is_home=True), 3.0))
+
+    def test_unpaid_public_session_skipped(self):
+        self.assertIsNone(report._backfill_cost(session_row(
+            paid_total=None, currency=None), 3.0))
+
+    def test_non_usd_public_session_skipped(self):
+        self.assertIsNone(report._backfill_cost(session_row(
+            currency="CAD"), 3.0))
+
+    def test_miles_fall_back_to_efficiency_without_range(self):
+        b = report._backfill_cost(session_row(range_added_km=0), 3.0)
+        self.assertAlmostEqual(b["miles"], 60.2 * 3.0)
+
+    def test_log_row_marks_session_and_names_home(self):
+        b = report._backfill_cost(session_row(
+            kwh=10.0, paid_total=None, currency=None, vendor=None,
+            city=None, is_home=True), 3.0)
+        html = report._backfill_row_html(
+            {**session_row(vendor=None, city=None), **b,
+             "gas_price": 4.0, "save": 3.8})
+        self.assertIn("from Rivian", html)
+        self.assertIn('<div class="trip-route">Home</div>', html)
+
+
+    def test_log_row_for_unnamed_public_session(self):
+        row = session_row(vendor=None, city=None)
+        html = report._backfill_row_html(
+            {**row, **report._backfill_cost(row, 3.0),
+             "gas_price": 4.0, "save": -8.0})
+        self.assertIn('<div class="trip-route">Unknown location</div>', html)
+
+
+class ReportSavingsTests(DbTestCase):
+    def setUp(self):
+        super().setUp()
+        tmp = Path(self.tmp.name)
+        self.report_path = tmp / "dashboard.html"
+        for name, value in (("REPORT_PATH", self.report_path),
+                            ("TOKENS_PATH", tmp / "missing.enc"),
+                            ("HOME_KWH_RATE", 0.10),
+                            ("GAS_COMPARISON_MPG", 25.0)):
+            patcher = mock.patch.object(report, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        env = mock.patch.dict(os.environ, {"WATTSON_GAS_PRICE": "4.00"})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def test_backfilled_sessions_join_total_without_double_counting(self):
+        # Tracked DC charge priced by its overlapping Rivian session:
+        # gas 150 mi / 25 * $4 = $24, paid $33.72, saved -$9.72.
+        self.derive(charge())
+        db.upsert_rivian_sessions([
+            stored(),
+            # Untracked home session: 10 kWh * $0.10 = $1, gas on
+            # 10 kWh * 3 mi/kWh = 30 mi = $4.80, saved $3.80.
+            stored(transaction_id="synthetic-txn-0002", start_ts=T - 90000,
+                   end_ts=T - 80000, kwh=10.0, paid_total=None,
+                   currency=None, vendor=None, city=None,
+                   range_added_km=0, is_home=True, is_public=None),
+            # Untracked public session: paid $2, gas on 50 km = $4.97.
+            stored(transaction_id="synthetic-txn-0003", start_ts=T - 50000,
+                   end_ts=T - 49000, kwh=5.0, paid_total=2.0,
+                   range_added_km=50.0),
+            # Untracked public session Rivian didn't price: left out.
+            stored(transaction_id="synthetic-txn-0004", start_ts=T - 30000,
+                   end_ts=T - 29000, paid_total=None, currency=None),
+        ])
+        report.generate()
+        html = self.report_path.read_text()
+        public_save = 50.0 * report.MI_PER_KM / 25 * 4 - 2.0
+        total = -9.72 + 3.80 + public_save
+        hero = re.search(r'<div class="v green">(.*?)</div>', html).group(1)
+        self.assertEqual(hero, report._fmt_money(int(round(total))))
+        self.assertEqual(html.count('<span class="dim">from Rivian</span>'),
+                         2)
+
+
+class LifetimeMilesTests(unittest.TestCase):
+    def test_total_from_odometer(self):
+        self.assertEqual(report._lifetime_miles_sub(343.6, 121.2),
+                         "344 mi total &middot; 121 tracked")
+
+    def test_tracked_only_without_odometer(self):
+        self.assertEqual(report._lifetime_miles_sub(None, 100.0),
+                         "100.0 mi tracked")
 
 
 class LatestUnpricedDcEndTests(DbTestCase):

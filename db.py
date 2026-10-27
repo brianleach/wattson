@@ -118,7 +118,9 @@ CREATE TABLE IF NOT EXISTS places(
 );
 
 -- Every completed charging session from Rivian's charging API. Paid ones
--- price the DC charges they overlap, resolved in charge_price_info.
+-- price the DC charges they overlap, resolved in charge_price_info; ones
+-- that overlap no charge of ours are sessions we never tracked, counted at
+-- report time.
 CREATE TABLE IF NOT EXISTS rivian_sessions(
     transaction_id TEXT PRIMARY KEY,
     start_ts INTEGER NOT NULL,
@@ -480,6 +482,16 @@ def latest_unpriced_dc_end(since: int) -> int | None:
                 if "dc" in (r["charge_type"] or "").lower()
                 and (r["kwh_added"] or 0) > 0 and r["end_ts"] > since
                 and r["start_ts"] not in prices), default=None)
+
+
+def unmatched_rivian_sessions() -> list[dict]:
+    """Rivian sessions that overlap no charge of ours, newest first."""
+    with connect() as con:
+        return [dict(r) for r in con.execute(
+            "SELECT * FROM rivian_sessions s WHERE NOT EXISTS ("
+            " SELECT 1 FROM charges c"
+            " WHERE min(s.end_ts, c.end_ts) - max(s.start_ts, c.start_ts) > 0)"
+            " ORDER BY start_ts DESC")]
 
 
 def rebuild_derived(trips: list[dict], drains: list[dict],

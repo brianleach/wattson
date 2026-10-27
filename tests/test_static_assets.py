@@ -38,8 +38,11 @@ class StaticAssetsTests(unittest.TestCase):
             os.environ.pop("WATTSON_DEMO", None)
             report.generate()
         html = self.output.read_text()
-        self.assertIn('<link rel="stylesheet" href="/dashboard.css">', html)
-        self.assertIn('<script src="/dashboard.js"></script>', html)
+        css = report._asset_url("dashboard.css")
+        js = report._asset_url("dashboard.js")
+        self.assertRegex(css, r"^/dashboard\.css\?v=[0-9a-f]{12}$")
+        self.assertIn(f'<link rel="stylesheet" href="{css}">', html)
+        self.assertIn(f'<script src="{js}"></script>', html)
         self.assertNotIn("var _navCar", html)
         self.assertNotIn("--bg:#0f0f11", html)
 
@@ -51,9 +54,8 @@ class StaticAssetsTests(unittest.TestCase):
         html = self.output.read_text()
         self.assertIn("var _navCar", html)
         self.assertIn("--bg:#0f0f11", html)
-        self.assertNotIn('<script src="/dashboard.js">', html)
-        self.assertNotIn(
-            '<link rel="stylesheet" href="/dashboard.css">', html)
+        self.assertNotIn('<script src="/dashboard.js', html)
+        self.assertNotIn('href="/dashboard.css', html)
         # The demo shows the Send destination button, flagged so
         # the modal runs in demo mode (no server behind the page).
         self.assertIn('id="navopen"', html)
@@ -97,6 +99,16 @@ class StaticAssetsTests(unittest.TestCase):
         for marker in ("var _navCar", "scrollRaf", "_costChargeId",
                        "poll-age"):
             self.assertIn(marker, js)
+
+
+    def test_asset_url_changes_with_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            asset = Path(tmp) / "dashboard.js"
+            with mock.patch.object(report, "_STATIC_DIR", Path(tmp)):
+                asset.write_text("one")
+                first = report._asset_url("dashboard.js")
+                asset.write_text("two")
+                self.assertNotEqual(first, report._asset_url("dashboard.js"))
 
 
 if __name__ == "__main__":

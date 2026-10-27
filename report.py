@@ -21,6 +21,7 @@ Data semantics:
   are not measurable: the car tops itself off while plugged in.
 """
 import base64
+import hashlib
 import html
 import json
 import math
@@ -1672,6 +1673,16 @@ def _asset_text(name: str) -> str:
     return (_STATIC_DIR / name).read_text(encoding="utf-8")
 
 
+def _asset_url(name: str) -> str:
+    """Served URL for a static asset, versioned by its content.
+
+    Cloudflare rewrites nginx's no-cache to a 4-hour browser TTL, so an
+    unversioned URL keeps serving the old file after a deploy.
+    """
+    digest = hashlib.sha256((_STATIC_DIR / name).read_bytes()).hexdigest()
+    return f"/{name}?v={digest[:12]}"
+
+
 def _styles_markup() -> str:
     """Dashboard CSS as it goes into the page: a <link> to
     static/dashboard.css for the served dashboard. Demo builds
@@ -1679,7 +1690,7 @@ def _styles_markup() -> str:
     page."""
     if os.environ.get("WATTSON_DEMO"):
         return "<style>\n" + _asset_text("dashboard.css") + "</style>"
-    return '<link rel="stylesheet" href="/dashboard.css">'
+    return f'<link rel="stylesheet" href="{_asset_url("dashboard.css")}">'
 
 
 def _scripts_markup() -> str:
@@ -1692,7 +1703,7 @@ def _scripts_markup() -> str:
         # explanatory notes instead of calling the API.
         return ("<script>\nwindow.WATTSON_DEMO = true;\n"
                 + _asset_text("dashboard.js") + "</script>")
-    return '<script src="/dashboard.js"></script>'
+    return f'<script src="{_asset_url("dashboard.js")}"></script>'
 
 
 def generate() -> None:

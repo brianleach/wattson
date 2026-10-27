@@ -1338,9 +1338,10 @@ def _charges_html(charges: list[dict], live: dict | None = None,
             f'{_charge_month_summary(hist)}'
             f'{rows}</div>')
     footnote = ('<p class="note">Home charging costed at $%.2f/kWh '
-                '(set RIVIAN_HOME_KWH_RATE in .env). Away sessions show no '
-                'cost; public rates vary. Tap "? add cost" on a DC fast '
-                'charge to record what you paid.</p>' % HOME_KWH_RATE)
+                '(set RIVIAN_HOME_KWH_RATE in .env). DC fast-charge costs '
+                'are pulled from your Rivian charging history automatically. '
+                'Tap "? add cost" on a session Rivian doesn\'t price, or to '
+                'override a price.</p>' % HOME_KWH_RATE)
     return "".join(parts) + orphan_bit + footnote
 
 

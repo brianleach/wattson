@@ -195,21 +195,33 @@ hero. (Optional; the layout holds without it.)
 
 The hero card shows lifetime savings against driving a gas SUV
 (`WATTSON_GAS_COMPARISON_MPG`, default 25 MPG). Each charging session is
-priced individually. EV cost is kWh times your home rate (or the DC
-price you entered). Gas cost is the session's miles divided by the
-comparison MPG, times that day's AAA gas price. Home sessions count automatically; DC fast
-charges are excluded until you record what you paid.
+priced individually. EV cost is kWh times your home rate (or the
+session's DC price). Gas cost is the session's miles divided by the
+comparison MPG, times that day's AAA gas price. Home sessions count automatically.
 
-To record a DC price, click **? add cost** on the charging-log row. A small
-form saves the $/kWh rate and regenerates the dashboard. Editing a
-priced session reopens the form with the current value. Entering `$0.00`
-marks a free session.
+DC fast-charge prices are pulled from your Rivian charging history: on the
+poll right after a DC session shows up, the poller asks Rivian what you
+were billed and spreads that total over the kWh Wattson saw go into the
+battery, so the session's EV cost is exactly what you paid. If the price
+isn't there yet it retries hourly for a day, then gives up. DC charges
+Rivian doesn't price (some third-party networks, free sessions) are
+excluded until you record what you paid.
+
+Sessions Wattson never saw, like ones from before you set it up, are
+filled in from the same Rivian history and marked "from Rivian" in the
+charging log and savings table. Home ones are costed at your home rate;
+public ones at what Rivian billed.
+
+To record or override a DC price, click **? add cost** (or **edit**) on the
+charging-log row. A small form saves the $/kWh rate and regenerates the
+dashboard. A price you enter is never overwritten by Rivian's. Entering
+`$0.00` marks a free session.
 
 Use **Export CSV** in the charging log to download all stored charging sessions,
 not just the latest rows shown on the dashboard. Times are UTC; energy, distance,
-duration, and battery levels use kWh, miles, minutes, and percent. Unentered
-prices stay blank, including home rates derived from configuration rather than
-stored on the session. The download follows the optional dashboard login.
+duration, and battery levels use kWh, miles, minutes, and percent. Prices you
+haven't entered and Rivian didn't bill stay blank, including home rates derived
+from configuration rather than stored on the session. The download follows the optional dashboard login.
 
 ## Contributing
 

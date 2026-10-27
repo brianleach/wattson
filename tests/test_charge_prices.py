@@ -333,7 +333,7 @@ class ChargePriceEndpointTests(unittest.TestCase):
 class OrphanDisplayTests(unittest.TestCase):
     def test_orphan_note_and_form_render_without_sessions(self):
         html = report._charges_html(
-            [], orphans=[(1700000000, 0.48)], ambiguous=())
+            [], [], orphans=[(1700000000, 0.48)], ambiguous=())
         self.assertIn("has no matching session any more", html)
         self.assertIn("/api/charge-price-reassign", html)
         self.assertIn("Remove orphan", html)
@@ -341,11 +341,11 @@ class OrphanDisplayTests(unittest.TestCase):
 
     def test_ambiguous_note_renders(self):
         html = report._charges_html(
-            [], orphans=[], ambiguous={1700000000})
+            [], [], orphans=[], ambiguous={1700000000})
         self.assertIn("held back from all of them", html)
 
     def test_no_note_when_nothing_orphaned(self):
-        html = report._charges_html([], orphans=[], ambiguous=())
+        html = report._charges_html([], [], orphans=[], ambiguous=())
         self.assertNotIn("charge-price-reassign", html)
 
 

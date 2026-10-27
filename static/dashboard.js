@@ -110,6 +110,29 @@ segToggle('trendseg', 'trend');
   render();
 })();
 
+/* Charging log: rows past the first page ship hidden; "Show earlier"
+   reveals the next page with the same staggered entrance as Daily activity. */
+(function () {
+  var listEl = document.getElementById('chglist');
+  var moreBtn = document.getElementById('chgshowmore');
+  if (!listEl || !moreBtn) return;
+  var PAGE = Number(listEl.dataset.page);
+  moreBtn.addEventListener('click', function () {
+    var rest = listEl.querySelectorAll('details.chargerow[hidden]');
+    var n = Math.min(PAGE, rest.length), i;
+    for (i = 0; i < n; i++) {
+      rest[i].hidden = false;
+      if (prefersReducedMotion()) continue;
+      rest[i].animate(
+        [{opacity: 0, transform: 'translateY(14px)'},
+         {opacity: 1, transform: 'translateY(0)'}],
+        {duration: 340, delay: i * 60, easing: 'cubic-bezier(0.4,0,0.2,1)',
+         fill: 'backwards'});
+    }
+    moreBtn.hidden = rest.length <= PAGE;
+  });
+})();
+
 /* Smooth accordions: intercept the native <details> toggle on day rows,
    charging rows, and the night-by-night breakdown, and animate the body
    height instead. Own IIFE (not inside the activity one, which returns early

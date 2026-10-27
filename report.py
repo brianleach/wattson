@@ -52,6 +52,7 @@ GAS_COMPARISON_MPG = float(os.environ.get(
     'WATTSON_GAS_COMPARISON_MPG',
     os.environ.get('RIVIAN_GAS_MPG', '25')))
 MI_PER_KM = 0.621371
+CHARGE_LOG_PAGE = 7
 GAS_PRICE_FALLBACK = float(os.environ.get(
     'WATTSON_GAS_PRICE',
     os.environ.get('RIVIAN_GAS_PRICE', '4.50')))
@@ -1381,6 +1382,14 @@ def _charges_html(charges: list[dict], backfill: list[dict],
                 for i, c in enumerate(hist)]
         rows += [(b["start_ts"], _backfill_row_html(b)) for b in backfill]
         rows.sort(key=lambda r: r[0], reverse=True)
+        # Same paging as Daily activity: the latest CHARGE_LOG_PAGE rows
+        # show, "Show earlier" reveals the next page (dashboard.js).
+        rows_html = "".join(
+            html if i < CHARGE_LOG_PAGE
+            else html.replace("<details ", "<details hidden ", 1)
+            for i, (_, html) in enumerate(rows))
+        more = ('<button id="chgshowmore" class="showmore">Show earlier'
+                '</button>' if len(rows) > CHARGE_LOG_PAGE else "")
         summary = _charge_month_summary(
             hist + [{"start_ts": b["start_ts"], "kwh_added": b["kwh"],
                      "miles_added": b["miles"]} for b in backfill])
@@ -1391,7 +1400,8 @@ def _charges_html(charges: list[dict], backfill: list[dict],
             f'<div class="card"><h3 class="row"><span>Charging log</span>'
             f'{export}</h3>'
             f'{summary}'
-            f'{"".join(html for _, html in rows)}</div>')
+            f'<div id="chglist" data-page="{CHARGE_LOG_PAGE}">{rows_html}'
+            f'</div>{more}</div>')
     footnote = ('<p class="note">Home charging costed at $%.2f/kWh '
                 '(set RIVIAN_HOME_KWH_RATE in .env). DC fast-charge costs '
                 'are pulled from your Rivian charging history automatically. '
@@ -1721,12 +1731,11 @@ def generate() -> None:
             "SELECT * FROM trips ORDER BY start_ts DESC LIMIT 60")]
         errands = [dict(r) for r in con.execute(
             "SELECT * FROM errands ORDER BY day DESC LIMIT 30")]
-        charges = [dict(r) for r in con.execute(
-            "SELECT * FROM charges ORDER BY start_ts DESC LIMIT 20")]
         # Idle-drain events between drives (from analyze.py _drain_from_run)
         drains = [dict(r) for r in con.execute(
             "SELECT * FROM drains ORDER BY sleep_ts")]
-        # All charges for lifetime savings (no LIMIT: the log shows 20).
+        # Every session: lifetime savings, and the charging log pages
+        # through all of them.
         all_charges = [dict(r) for r in con.execute(
             "SELECT * FROM charges ORDER BY start_ts DESC")]
         # Prices resolve once, here, from the annotation table: the
@@ -1735,8 +1744,6 @@ def generate() -> None:
         # through the same helper, so no surface can disagree.
         _prices, _orphans, _ambiguous = charge_price_info(
             con, [c["start_ts"] for c in all_charges])
-        for _c in charges:
-            _c["user_cost_per_kwh"] = _prices.get(_c["start_ts"])
         for _c in all_charges:
             _c["user_cost_per_kwh"] = _prices.get(_c["start_ts"])
         agg = con.execute(
@@ -2142,7 +2149,7 @@ def generate() -> None:
         loc, latest.get("lat"), latest.get("lon"))
     charging_section = (
         '<h2 class="sec" id="charging">Charging</h2>'
-        + _charges_html(charges, backfill, live, live_is_home,
+        + _charges_html(all_charges, backfill, live, live_is_home,
                         eff=(lifetime_mpk if lifetime_mpk else 3.0),
                         orphans=_orphans, ambiguous=_ambiguous))
     savings_section = (

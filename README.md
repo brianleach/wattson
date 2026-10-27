@@ -199,13 +199,13 @@ priced individually. EV cost is kWh times your home rate (or the
 session's DC price). Gas cost is the session's miles divided by the
 comparison MPG, times that day's AAA gas price. Home sessions count automatically.
 
-DC fast-charge prices are pulled from your Rivian charging history: on the
-poll right after a DC session shows up, the poller asks Rivian what you
-were billed and spreads that total over the kWh Wattson saw go into the
-battery, so the session's EV cost is exactly what you paid. If the price
-isn't there yet it retries hourly for a day, then gives up. DC charges
-Rivian doesn't price (some third-party networks, free sessions) are
-excluded until you record what you paid.
+DC fast-charge prices are pulled from your Rivian charging history: shortly
+after a DC session ends, the poller asks Rivian what you were billed and
+spreads that total over the kWh Wattson saw go into the battery, so the
+session's EV cost is exactly what you paid. If the price isn't there yet it
+retries hourly for a day, then gives up. A full sync also runs once a day.
+DC charges Rivian doesn't price (some third-party networks, free sessions)
+are excluded until you record what you paid.
 
 Sessions Wattson never saw, like ones from before you set it up, are
 filled in from the same Rivian history and marked "from Rivian" in the

@@ -111,26 +111,44 @@ segToggle('trendseg', 'trend');
 })();
 
 /* Charging log: rows past the first page ship hidden; "Show earlier"
-   reveals the next page with the same staggered entrance as Daily activity,
-   and the AC/DC filter restarts paging over just its matching rows. */
+   reveals the next page with the same staggered entrance as Daily activity.
+   The AC/DC filter and the month dropdown both work over the rows the filter
+   matches: a month shows that whole month, then earlier from there. */
 (function () {
   var listEl = document.getElementById('chglist');
   if (!listEl) return;
   var moreBtn = document.getElementById('chgshowmore');
   var filterEl = document.getElementById('chgfilter');
+  var monthSel = document.getElementById('chgmonth');
   var rows = Array.prototype.slice.call(
     listEl.querySelectorAll('details.chargerow'));
-  var PAGE = Number(listEl.dataset.page), shown = PAGE, filter = 'all';
+  var PAGE = Number(listEl.dataset.page);
+  var filter = 'all', month = 'latest', start = 0, shown = PAGE;
+  function matching() {
+    return rows.filter(function (r) {
+      return filter === 'all' || r.dataset.type === filter;
+    });
+  }
+  /* Rows are newest first, so a month's rows are contiguous: start at the
+     first one on or before the month, and show the whole month. */
+  function jump() {
+    var m = matching(), i;
+    start = 0; shown = PAGE;
+    if (month === 'latest') return;
+    for (i = 0; i < m.length && m[i].dataset.month > month; i++);
+    start = i;
+    for (shown = 0; i < m.length && m[i].dataset.month === month; i++)
+      shown++;
+    if (!shown) shown = PAGE;
+  }
   function apply(animate) {
-    var matched = 0, fresh = [];
+    var m = matching(), fresh = [];
     rows.forEach(function (r) {
-      var match = filter === 'all' || r.dataset.type === filter;
-      var show = match && matched < shown;
-      if (match) matched++;
+      var idx = m.indexOf(r), show = idx >= start && idx < start + shown;
       if (show && r.hidden) fresh.push(r);
       r.hidden = !show;
     });
-    if (moreBtn) moreBtn.hidden = matched <= shown;
+    if (moreBtn) moreBtn.hidden = start + shown >= m.length;
     if (!animate || prefersReducedMotion()) return;
     fresh.forEach(function (r, i) {
       r.animate(
@@ -150,9 +168,14 @@ segToggle('trendseg', 'trend');
         .forEach(function (x) { x.classList.remove('on'); });
       b.classList.add('on');
       filter = b.dataset.f;
-      shown = PAGE;
+      jump();
       apply(false);
     });
+  });
+  if (monthSel) monthSel.addEventListener('change', function () {
+    month = monthSel.value;
+    jump();
+    apply(false);
   });
 })();
 

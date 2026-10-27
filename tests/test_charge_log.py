@@ -50,5 +50,26 @@ class ChargeLogFilterTests(unittest.TestCase):
         self.assertNotIn('id="chgfilter"', rendered(3))
 
 
+
+class ChargeLogMonthTests(unittest.TestCase):
+    def test_rows_carry_their_local_month(self):
+        html = rendered(2)
+        self.assertEqual(
+            re.findall(r'data-month="([\d-]+)"', html),
+            [report._ldt(T).strftime("%Y-%m"),
+             report._ldt(T - 86400).strftime("%Y-%m")])
+
+    def test_month_select_lists_latest_then_months_newest_first(self):
+        starts = [T, T - 40 * 86400, T - 2 * 86400]
+        html = report._charge_month_select(starts)
+        months = sorted({report._ldt(t).strftime("%Y-%m") for t in starts},
+                        reverse=True)
+        self.assertEqual(re.findall(r'<option value="([^"]+)"', html),
+                         ["latest"] + months)
+
+    def test_no_month_select_without_sessions(self):
+        self.assertEqual(report._charge_month_select([]), "")
+
+
 if __name__ == "__main__":
     unittest.main()

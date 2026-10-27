@@ -1363,6 +1363,20 @@ def _charge_row_html(c: dict, scale: float, open_: bool,
         f'</div></div></details>')
 
 
+def _charge_month_select(starts: list[int]) -> str:
+    """Latest/month dropdown for the charging log, like Daily activity's."""
+    months = sorted({_ldt(ts).strftime("%Y-%m") for ts in starts},
+                    reverse=True)
+    if not months:
+        return ""
+    opts = '<option value="latest">Latest</option>' + "".join(
+        f'<option value="{m}">'
+        f'{datetime.strptime(m, "%Y-%m").strftime("%B %Y")}</option>'
+        for m in months)
+    return (f'<select id="chgmonth" class="monthsel" '
+            f'aria-label="Jump to month">{opts}</select>')
+
+
 def _charges_html(charges: list[dict], backfill: list[dict],
                   live: dict | None = None,
                   live_is_home: bool = False, eff: float = 3.0,
@@ -1393,9 +1407,10 @@ def _charges_html(charges: list[dict], backfill: list[dict],
         # show, "Show earlier" reveals the next page, and the AC/DC
         # filter pages through its matches the same way (dashboard.js).
         rows_html = "".join(
-            html.replace("<details ", f'<details data-type="{kind}"'
+            html.replace("<details ", f'<details data-type="{kind}" '
+                         f'data-month="{_ldt(ts).strftime("%Y-%m")}"'
                          + (" " if i < CHARGE_LOG_PAGE else " hidden "), 1)
-            for i, (_, kind, html) in enumerate(rows))
+            for i, (ts, kind, html) in enumerate(rows))
         more = ('<button id="chgshowmore" class="showmore">Show earlier'
                 '</button>' if len(rows) > CHARGE_LOG_PAGE else "")
         kinds = {kind for _, kind, _ in rows}
@@ -2172,7 +2187,10 @@ def generate() -> None:
     live_is_home = bool(live) and _is_home(
         loc, latest.get("lat"), latest.get("lon"))
     charging_section = (
-        '<h2 class="sec" id="charging">Charging</h2>'
+        '<div class="sec-row" id="charging"><h2 class="sec">Charging</h2>'
+        + _charge_month_select([c["start_ts"] for c in all_charges]
+                               + [b["start_ts"] for b in backfill])
+        + '</div>'
         + _charges_html(all_charges, backfill, live, live_is_home,
                         eff=(lifetime_mpk if lifetime_mpk else 3.0),
                         orphans=_orphans, ambiguous=_ambiguous))

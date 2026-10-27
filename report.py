@@ -54,6 +54,11 @@ GAS_COMPARISON_MPG = float(os.environ.get(
     os.environ.get('RIVIAN_GAS_MPG', '25')))
 MI_PER_KM = 0.621371
 CHARGE_LOG_PAGE = 7
+# New charge maps drawn per generate. The log covers every session, so an
+# upgrade (or a tile outage) would otherwise stitch tiles for all of them
+# inside one poll; the rest fill in on later polls, newest first.
+MAP_RENDERS_PER_GENERATE = 10
+_map_renders_left = MAP_RENDERS_PER_GENERATE
 GAS_PRICE_FALLBACK = float(os.environ.get(
     'WATTSON_GAS_PRICE',
     os.environ.get('RIVIAN_GAS_PRICE', '4.50')))
@@ -958,16 +963,11 @@ def _activity_html(trips: list[dict], errands: list[dict],
     days = _activity_day_data(trips, errands, segs)
     if not days:
         return ("", '<div class="empty">No activity recorded yet.</div>')
-    months: list[tuple[str, str]] = []
+    months: list[str] = []
     for d in days:
-        if not months or months[-1][0] != d["month"]:
-            months.append(
-                (d["month"],
-                 datetime.strptime(d["month"], "%Y-%m").strftime("%B %Y")))
-    opts = ('<option value="latest">Latest</option>' + "".join(
-        f'<option value="{m}">{lbl}</option>' for m, lbl in months))
-    select = (f'<select id="actmonth" class="monthsel" '
-              f'aria-label="Jump to month">{opts}</select>')
+        if not months or months[-1] != d["month"]:
+            months.append(d["month"])
+    select = _month_select("actmonth", months)
     payload = json.dumps({"days": days}, ensure_ascii=False)
     payload = payload.replace("</", "<\\/")
     html = ('<div id="actdays"></div>'
@@ -1198,6 +1198,10 @@ def _point_map_html(lat: float | None, lon: float | None,
     if png_path.exists():
         jpeg_bytes = png_path.read_bytes()
     else:
+        global _map_renders_left
+        if _map_renders_left <= 0:
+            return ""
+        _map_renders_left -= 1
         try:
             jpeg_bytes = _render_point_map(lat, lon)
         except Exception:
@@ -1275,8 +1279,7 @@ def _backfill_row_html(b: dict) -> str:
         f'the car during this session.</div></div></div></details>')
 
 
-def _charge_row_html(c: dict, scale: float, open_: bool,
-                     eff: float = 3.0) -> str:
+def _charge_row_html(c: dict, scale: float, eff: float = 3.0) -> str:
     """One expandable charging-log row: summary plus detail."""
     ma = (f"{c['miles_added']:.0f} mi"
           if c.get("miles_added") is not None else "-")
@@ -1340,9 +1343,8 @@ def _charge_row_html(c: dict, scale: float, open_: bool,
     cap = (f'{c["soc_start"]:.0f}% &rarr; {c["soc_end"]:.0f}% &middot; '
            f'{c["avg_kw"] or "-"} kW avg')
     mmap = _point_map_html(c.get("lat"), c.get("lon"), c.get("label") or "", f"charge-{c['start_ts']}")
-    open_attr = " open" if open_ else ""
     return (
-        f'<details class="chargerow sacc"{open_attr}><summary>'
+        f'<details class="chargerow sacc"><summary>'
         f'<div class="trip-time">{_fmt_ts(c["start_ts"])}'
         f' <span class="dim">&middot; {c["minutes"]:.0f} min</span>{tag}</div>'
         f'<div class="trip-route">{_esc(c["label"] or "Unknown location")}</div>'
@@ -1363,18 +1365,21 @@ def _charge_row_html(c: dict, scale: float, open_: bool,
         f'</div></div></details>')
 
 
-def _charge_month_select(starts: list[int]) -> str:
-    """Latest/month dropdown for the charging log, like Daily activity's."""
-    months = sorted({_ldt(ts).strftime("%Y-%m") for ts in starts},
-                    reverse=True)
-    if not months:
-        return ""
+def _month_select(select_id: str, months: list[str]) -> str:
+    """Latest/month dropdown over YYYY-MM months, newest first."""
     opts = '<option value="latest">Latest</option>' + "".join(
         f'<option value="{m}">'
         f'{datetime.strptime(m, "%Y-%m").strftime("%B %Y")}</option>'
         for m in months)
-    return (f'<select id="chgmonth" class="monthsel" '
+    return (f'<select id="{select_id}" class="monthsel" '
             f'aria-label="Jump to month">{opts}</select>')
+
+
+def _charge_month_select(starts: list[int]) -> str:
+    """Latest/month dropdown for the charging log, like Daily activity's."""
+    months = sorted({_ldt(ts).strftime("%Y-%m") for ts in starts},
+                    reverse=True)
+    return _month_select("chgmonth", months) if months else ""
 
 
 def _charges_html(charges: list[dict], backfill: list[dict],
@@ -1398,19 +1403,21 @@ def _charges_html(charges: list[dict], backfill: list[dict],
         rows = [(c["start_ts"],
                  "dc" if "dc" in (c.get("charge_type") or "").lower()
                  else "ac",
-                 _charge_row_html(c, scale, open_=(i == 0), eff=eff))
-                for i, c in enumerate(hist)]
+                 _charge_row_html(c, scale, eff=eff))
+                for c in hist]
         rows += [(b["start_ts"], "dc" if b["is_dc"] else "ac",
                   _backfill_row_html(b)) for b in backfill]
         rows.sort(key=lambda r: r[0], reverse=True)
         # Same paging as Daily activity: the latest CHARGE_LOG_PAGE rows
         # show, "Show earlier" reveals the next page, and the AC/DC
         # filter pages through its matches the same way (dashboard.js).
+        # The newest row starts open; rows past the first page start hidden.
         rows_html = "".join(
-            html.replace("<details ", f'<details data-type="{kind}" '
-                         f'data-month="{_ldt(ts).strftime("%Y-%m")}"'
-                         + (" " if i < CHARGE_LOG_PAGE else " hidden "), 1)
-            for i, (ts, kind, html) in enumerate(rows))
+            row.replace("<details ", f'<details data-type="{kind}" '
+                        f'data-month="{_ldt(ts).strftime("%Y-%m")}" '
+                        + ("open " if i == 0 else "")
+                        + ("hidden " if i >= CHARGE_LOG_PAGE else ""), 1)
+            for i, (ts, kind, row) in enumerate(rows))
         more = ('<button id="chgshowmore" class="showmore">Show earlier'
                 '</button>' if len(rows) > CHARGE_LOG_PAGE else "")
         kinds = {kind for _, kind, _ in rows}
@@ -1732,6 +1739,8 @@ def _scripts_markup() -> str:
 
 
 def generate() -> None:
+    global _map_renders_left
+    _map_renders_left = MAP_RENDERS_PER_GENERATE
     try:
         tokens = unseal(TOKENS_PATH.read_bytes())
         vehicle_name = (tokens.get("vehicle_name") or VEHICLE_NAME

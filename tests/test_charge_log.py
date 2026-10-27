@@ -1,5 +1,7 @@
 import re
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import report
@@ -69,6 +71,39 @@ class ChargeLogMonthTests(unittest.TestCase):
 
     def test_no_month_select_without_sessions(self):
         self.assertEqual(report._charge_month_select([]), "")
+
+
+
+class ChargeLogOpenRowTests(unittest.TestCase):
+    def test_newest_row_opens_even_when_it_came_from_rivian(self):
+        newer = {"start_ts": T + 3600, "kwh": 5.0, "miles": 10.0,
+                 "is_dc": False}
+        with mock.patch("report._charge_row_html",
+                        return_value='<details class="chargerow">t</details>'), \
+                mock.patch("report._backfill_row_html",
+                           return_value='<details class="chargerow">b</details>'), \
+                mock.patch("report._charge_month_summary", return_value=""):
+            html = report._charges_html([session(0)], [newer])
+        rows = re.findall(r"<details[^>]*>[tb]", html)
+        self.assertEqual([("open" in r, r[-1]) for r in rows],
+                         [(True, "b"), (False, "t")])
+
+
+class ChargeMapBudgetTests(unittest.TestCase):
+    def test_new_maps_stop_at_the_budget(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(report, "REPORT_PATH",
+                                  Path(tmp) / "dash.html"), \
+                mock.patch.object(report, "_render_point_map",
+                                  return_value=b"jpeg") as render, \
+                mock.patch.object(report, "_map_renders_left", 2):
+            maps = [report._point_map_html(30.0, -97.0, "x", f"charge-{i}")
+                    for i in range(3)]
+            # Already on disk: served without spending budget.
+            again = report._point_map_html(30.0, -97.0, "x", "charge-0")
+        self.assertEqual([bool(m) for m in maps], [True, True, False])
+        self.assertTrue(again)
+        self.assertEqual(render.call_count, 2)
 
 
 if __name__ == "__main__":

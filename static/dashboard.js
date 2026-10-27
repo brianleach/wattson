@@ -34,6 +34,17 @@ function prefersReducedMotion() {
   return !!(window.matchMedia &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 }
+/* Staggered entrance for rows that "Show earlier" just revealed. */
+function staggerIn(rows) {
+  if (prefersReducedMotion()) return;
+  rows.forEach(function (r, i) {
+    r.animate(
+      [{opacity: 0, transform: 'translateY(14px)'},
+       {opacity: 1, transform: 'translateY(0)'}],
+      {duration: 340, delay: i * 60, easing: 'cubic-bezier(0.4,0,0.2,1)',
+       fill: 'backwards'});
+  });
+}
 /* Segmented range controls (battery 7/14/30d, pack health and overnight
    trend 1M/6M/1Y/All): one helper, each button shows its own panel. */
 function segToggle(segId, prefix) {
@@ -84,17 +95,8 @@ segToggle('trendseg', 'trend');
     var prevCount = from - start;
     shown += PAGE;
     render(from);
-    if (prefersReducedMotion()) return;
-    /* Staggered entrance for the freshly appended rows. */
-    var rows = listEl.querySelectorAll('details.aday');
-    var fresh = rows.length - prevCount, i;
-    for (i = 0; i < fresh; i++) {
-      rows[prevCount + i].animate(
-        [{opacity: 0, transform: 'translateY(14px)'},
-         {opacity: 1, transform: 'translateY(0)'}],
-        {duration: 340, delay: i * 60, easing: 'cubic-bezier(0.4,0,0.2,1)',
-         fill: 'backwards'});
-    }
+    staggerIn(Array.prototype.slice.call(
+      listEl.querySelectorAll('details.aday'), prevCount));
   });
   if (monthSel) monthSel.addEventListener('change', function () {
     var m = monthSel.value, i;
@@ -149,14 +151,7 @@ segToggle('trendseg', 'trend');
       r.hidden = !show;
     });
     if (moreBtn) moreBtn.hidden = start + shown >= m.length;
-    if (!animate || prefersReducedMotion()) return;
-    fresh.forEach(function (r, i) {
-      r.animate(
-        [{opacity: 0, transform: 'translateY(14px)'},
-         {opacity: 1, transform: 'translateY(0)'}],
-        {duration: 340, delay: i * 60, easing: 'cubic-bezier(0.4,0,0.2,1)',
-         fill: 'backwards'});
-    });
+    if (animate) staggerIn(fresh);
   }
   if (moreBtn) moreBtn.addEventListener('click', function () {
     shown += PAGE;

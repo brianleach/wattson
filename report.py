@@ -1320,14 +1320,17 @@ def _charge_row_html(c: dict, scale: float, open_: bool,
             _save3 = _gas_c3 - _ev_c3
             _cls3 = "green" if _save3 >= 0 else "amber"
             _verb3 = "saved" if _save3 >= 0 else "lost"
+            # Same shape as home rows: a cost item, then a saved item.
+            cost_bit = ('<span><b>$%.2f</b> '
+                        '<a href="#" onclick="event.stopPropagation();'
+                        'openCostModal(%d, %.2f, %d);return false;" '
+                        'class="cost-edit green tiny">edit</a> cost '
+                        '<span class="dim">($%.2f/kWh)</span></span>'
+                        % (_ev_c3, c["id"], _dc_rate, c["start_ts"],
+                           _dc_rate))
             savings_bit = ('<span><b class="%s">$%.2f</b> %s '
-                           '<span class="dim">($%.2f paid &middot; $%.2f/gal, '
-                           '$%.2f/kWh)</span> '
-                           '<a href="#" onclick="event.stopPropagation();'
-                           'openCostModal(%d, %.2f, %d);return false;" '
-                           'class="cost-action green tiny">edit</a></span>'
-                           % (_cls3, abs(_save3), _verb3, _ev_c3, _gp_val,
-                              _dc_rate, c["id"], _dc_rate, c["start_ts"]))
+                           '<span class="dim">($%.2f/gal)</span></span>'
+                           % (_cls3, abs(_save3), _verb3, _gp_val))
         else:
             savings_bit = ('<span><a href="#" onclick="event.stopPropagation();'
                            'openCostModal(%d, 0, %d);return false;" '

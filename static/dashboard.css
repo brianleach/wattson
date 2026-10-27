@@ -142,7 +142,10 @@ details.aday summary .dim{font-weight:400;font-size:14px}
 .tag{display:inline-block;font-size:12px;font-weight:600;color:var(--amber);
   border:1px solid #4a3a1c;border-radius:999px;padding:2px 9px;margin-left:8px;
   vertical-align:1px}
-.trip-stats{display:flex;gap:16px;margin-top:8px;color:var(--dim);font-size:14px}
+.trip-stats{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:8px;color:var(--dim);font-size:14px}
+.trip-stats>span{white-space:nowrap}
+/* Edit link right after a DC cost: inline text, no box of its own. */
+.cost-edit{font-weight:600;text-decoration:none}
 .trip-stats b{color:var(--text);font-weight:700}
 .cost-action{display:inline-flex;align-items:center;justify-content:center;
   min-width:44px;min-height:44px;padding:6px 8px}

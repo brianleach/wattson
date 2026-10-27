@@ -117,6 +117,24 @@ CREATE TABLE IF NOT EXISTS places(
     PRIMARY KEY (lat_r, lon_r)
 );
 
+-- Every completed charging session from Rivian's charging API. Paid ones
+-- price the DC charges they overlap, resolved in charge_price_info; ones
+-- that overlap no charge of ours are sessions we never tracked, counted at
+-- report time.
+CREATE TABLE IF NOT EXISTS rivian_sessions(
+    transaction_id TEXT PRIMARY KEY,
+    start_ts INTEGER NOT NULL,
+    end_ts INTEGER NOT NULL,
+    kwh REAL,
+    paid_total REAL,
+    currency TEXT,
+    vendor TEXT,
+    city TEXT,
+    range_added_km REAL,
+    is_home INTEGER,
+    is_public INTEGER
+);
+
 -- Ambient temperature cache for trips (Open-Meteo, hourly): one row per
 -- (local day, hour, ~11 km cell). Filled on demand by weather.temp_for_trip.
 CREATE TABLE IF NOT EXISTS weather_cache(
@@ -250,6 +268,12 @@ def charge_price_info(con, starts):
             orphans.append((s, cost))
         elif s not in ambiguous:
             prices[s] = cost
+    # What Rivian billed fills in behind manual prices. It is recomputed
+    # from rivian_sessions on every call, so it follows start_ts shifts and
+    # never shows up as an orphan.
+    for s, rate in _rivian_rates(con).values():
+        if s in startset and s not in ambiguous:
+            prices.setdefault(s, rate)
     return prices, orphans, ambiguous
 
 
@@ -393,6 +417,74 @@ def set_place(lat_r: int, lon_r: int, label: str | None, ts: int) -> None:
         con.execute(
             "INSERT OR REPLACE INTO places (lat_r, lon_r, label, ts)"
             " VALUES (?,?,?,?)", (lat_r, lon_r, label, ts))
+
+
+def upsert_rivian_sessions(sessions: list[dict]) -> None:
+    with connect() as con:
+        con.executemany(
+            "INSERT OR REPLACE INTO rivian_sessions (transaction_id, start_ts,"
+            " end_ts, kwh, paid_total, currency, vendor, city,"
+            " range_added_km, is_home, is_public)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            [(r["transaction_id"], r["start_ts"], r["end_ts"], r["kwh"],
+              r["paid_total"], r["currency"], r["vendor"], r["city"],
+              r["range_added_km"], r["is_home"], r["is_public"])
+             for r in sessions])
+
+
+def _rivian_rates(con) -> dict[int, tuple[int, float]]:
+    """{charge id: (start_ts, $/kWh)} for DC charges Rivian billed.
+
+    Each paid session prices the DC charge it overlaps most in time, one to
+    one, and matching runs against every DC charge so a session can't drift
+    onto a neighbor of a manually priced one. The rate uses our battery-side
+    kWh, not the billed kWh, so the session's EV cost equals what was paid.
+    """
+    paid = con.execute(
+        "SELECT start_ts, end_ts, paid_total FROM rivian_sessions"
+        " WHERE paid_total IS NOT NULL AND currency = 'USD'").fetchall()
+    charges = con.execute(
+        "SELECT id, start_ts, end_ts, kwh_added FROM charges"
+        " WHERE lower(charge_type) LIKE '%dc%' AND kwh_added > 0").fetchall()
+    pairs = []
+    for ri, (p_start, p_end, _) in enumerate(paid):
+        for c in charges:
+            overlap = min(p_end, c[2]) - max(p_start, c[1])
+            if overlap > 0:
+                pairs.append((overlap, ri, c))
+    used_paid, rates = set(), {}
+    for _, ri, (cid, start_ts, _, kwh) in sorted(
+            pairs, key=lambda p: p[0], reverse=True):
+        if ri in used_paid or cid in rates:
+            continue
+        used_paid.add(ri)
+        rates[cid] = (start_ts, paid[ri][2] / kwh)
+    return rates
+
+
+def latest_unpriced_dc_end(since: int, until: int) -> int | None:
+    """End time of the newest unpriced DC charge that ended in
+    (``since``, ``until``]."""
+    with connect() as con:
+        rows = con.execute(
+            "SELECT start_ts, end_ts, charge_type, kwh_added FROM charges"
+            ).fetchall()
+        prices, _, _ = charge_price_info(con, [r["start_ts"] for r in rows])
+    return max((r["end_ts"] for r in rows
+                if "dc" in (r["charge_type"] or "").lower()
+                and (r["kwh_added"] or 0) > 0
+                and since < r["end_ts"] <= until
+                and r["start_ts"] not in prices), default=None)
+
+
+def unmatched_rivian_sessions() -> list[dict]:
+    """Rivian sessions that overlap no charge of ours, newest first."""
+    with connect() as con:
+        return [dict(r) for r in con.execute(
+            "SELECT * FROM rivian_sessions s WHERE NOT EXISTS ("
+            " SELECT 1 FROM charges c"
+            " WHERE min(s.end_ts, c.end_ts) - max(s.start_ts, c.start_ts) > 0)"
+            " ORDER BY start_ts DESC")]
 
 
 def rebuild_derived(trips: list[dict], drains: list[dict],

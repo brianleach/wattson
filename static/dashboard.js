@@ -34,6 +34,17 @@ function prefersReducedMotion() {
   return !!(window.matchMedia &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 }
+/* Staggered entrance for rows that "Show earlier" just revealed. */
+function staggerIn(rows) {
+  if (prefersReducedMotion()) return;
+  rows.forEach(function (r, i) {
+    r.animate(
+      [{opacity: 0, transform: 'translateY(14px)'},
+       {opacity: 1, transform: 'translateY(0)'}],
+      {duration: 340, delay: i * 60, easing: 'cubic-bezier(0.4,0,0.2,1)',
+       fill: 'backwards'});
+  });
+}
 /* Segmented range controls (battery 7/14/30d, pack health and overnight
    trend 1M/6M/1Y/All): one helper, each button shows its own panel. */
 function segToggle(segId, prefix) {
@@ -84,17 +95,8 @@ segToggle('trendseg', 'trend');
     var prevCount = from - start;
     shown += PAGE;
     render(from);
-    if (prefersReducedMotion()) return;
-    /* Staggered entrance for the freshly appended rows. */
-    var rows = listEl.querySelectorAll('details.aday');
-    var fresh = rows.length - prevCount, i;
-    for (i = 0; i < fresh; i++) {
-      rows[prevCount + i].animate(
-        [{opacity: 0, transform: 'translateY(14px)'},
-         {opacity: 1, transform: 'translateY(0)'}],
-        {duration: 340, delay: i * 60, easing: 'cubic-bezier(0.4,0,0.2,1)',
-         fill: 'backwards'});
-    }
+    staggerIn(Array.prototype.slice.call(
+      listEl.querySelectorAll('details.aday'), prevCount));
   });
   if (monthSel) monthSel.addEventListener('change', function () {
     var m = monthSel.value, i;
@@ -108,6 +110,68 @@ segToggle('trendseg', 'trend');
     render();
   });
   render();
+})();
+
+/* Charging log: rows past the first page ship hidden; "Show earlier"
+   reveals the next page with the same staggered entrance as Daily activity.
+   The AC/DC filter and the month dropdown both work over the rows the filter
+   matches: a month shows that whole month, then earlier from there. */
+(function () {
+  var listEl = document.getElementById('chglist');
+  if (!listEl) return;
+  var moreBtn = document.getElementById('chgshowmore');
+  var filterEl = document.getElementById('chgfilter');
+  var monthSel = document.getElementById('chgmonth');
+  var rows = Array.prototype.slice.call(
+    listEl.querySelectorAll('details.chargerow'));
+  var PAGE = Number(listEl.dataset.page);
+  var filter = 'all', month = 'latest', start = 0, shown = PAGE;
+  function matching() {
+    return rows.filter(function (r) {
+      return filter === 'all' || r.dataset.type === filter;
+    });
+  }
+  /* Rows are newest first, so a month's rows are contiguous: start at the
+     first one on or before the month, and show the whole month. */
+  function jump() {
+    var m = matching(), i;
+    start = 0; shown = PAGE;
+    if (month === 'latest') return;
+    for (i = 0; i < m.length && m[i].dataset.month > month; i++);
+    start = i;
+    for (shown = 0; i < m.length && m[i].dataset.month === month; i++)
+      shown++;
+    if (!shown) shown = PAGE;
+  }
+  function apply(animate) {
+    var m = matching(), fresh = [];
+    rows.forEach(function (r) {
+      var idx = m.indexOf(r), show = idx >= start && idx < start + shown;
+      if (show && r.hidden) fresh.push(r);
+      r.hidden = !show;
+    });
+    if (moreBtn) moreBtn.hidden = start + shown >= m.length;
+    if (animate) staggerIn(fresh);
+  }
+  if (moreBtn) moreBtn.addEventListener('click', function () {
+    shown += PAGE;
+    apply(true);
+  });
+  if (filterEl) filterEl.querySelectorAll('button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      filterEl.querySelectorAll('button')
+        .forEach(function (x) { x.classList.remove('on'); });
+      b.classList.add('on');
+      filter = b.dataset.f;
+      jump();
+      apply(false);
+    });
+  });
+  if (monthSel) monthSel.addEventListener('change', function () {
+    month = monthSel.value;
+    jump();
+    apply(false);
+  });
 })();
 
 /* Smooth accordions: intercept the native <details> toggle on day rows,

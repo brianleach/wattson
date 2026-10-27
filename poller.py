@@ -30,12 +30,22 @@ from config import (BURST_HEARTBEAT_PATH, BURST_PID_PATH, FLAG_REAUTH,
                     POLL_INTERVAL_ASLEEP, POLL_INTERVAL_DRIVING,
                     POLL_INTERVAL_PARKED, SPEED_DRIVE_EPS, STATE_PATH,
                     TOKENS_PATH, WATCH_PATH)
-from db import init, insert_snapshot, insert_raw_snapshot
-from riv import NeedsReauth, fetch_state
+from db import (init, insert_snapshot, insert_raw_snapshot,
+                latest_unpriced_dc_end, upsert_rivian_sessions)
+from riv import NeedsReauth, fetch_rivian_sessions, fetch_state
 from analyze import DRIVE_GEARS, haversine_mi
 
 
 MOVE_GPS_MI = 0.06  # ~100 m; parked GPS jitter stays well under this
+# Rivian has the receipt once a session ends, so one fetch after a DC charge
+# settles normally prices it. A charge in progress is already a row whose end
+# keeps moving, so it only counts once it has been still for SETTLE. Retries
+# are hourly, and a charge still unpriced after a day is one Rivian won't
+# price. A full sync at least daily picks up sessions Wattson never saw.
+SESSION_SETTLE_SECONDS = 10 * 60
+SESSION_RETRY_SECONDS = 60 * 60
+SESSION_WINDOW_SECONDS = 24 * 60 * 60
+FULL_SYNC_SECONDS = 24 * 60 * 60
 
 
 def _require_home() -> None:
@@ -83,6 +93,35 @@ def load_state() -> dict:
 
 def save_state(state: dict) -> None:
     STATE_PATH.write_text(json.dumps(state))
+
+
+def sync_rivian_sessions(state: dict, now: int) -> None:
+    """Store Rivian's charging history and price unpriced DC charges from it.
+
+    Syncs when none has run for a day (the first ever included), and when
+    a DC charge that ended since the last sync has settled; one still
+    unpriced is retried at most hourly. Saves the
+    attempt time into ``state`` before fetching, so a failing endpoint
+    waits for the retry window too. Never raises: this is a nicety and
+    must not break polling.
+    """
+    last = state.get("last_rivian_sync")
+    try:
+        if last is not None and now - last < FULL_SYNC_SECONDS:
+            newest = latest_unpriced_dc_end(now - SESSION_WINDOW_SECONDS,
+                                            now - SESSION_SETTLE_SECONDS)
+            if newest is None:
+                return
+            if newest <= last and now - last < SESSION_RETRY_SECONDS:
+                return
+        state["last_rivian_sync"] = now
+        save_state(state)
+        upsert_rivian_sessions(fetch_rivian_sessions())
+    except NeedsReauth:
+        FLAG_REAUTH.touch()
+        print("Session expired - owner needs to re-link (NEEDS_REAUTH).")
+    except Exception:
+        traceback.print_exc()
 
 
 def is_asleep(power: str | None, gear: str | None = None,
@@ -173,11 +212,7 @@ def main() -> None:
     except Exception:
         pass
 
-    import analyze
-    trips, drains, charges, errands = analyze.derive()
-
-    import report
-    report.generate()
+    trips, drains, charges, errands = _derive_sync_report(state, now)
 
     save_state({"last_poll": now, "last_power": snap.get("power_state"),
                 "last_gear": snap.get("gear"),
@@ -185,7 +220,8 @@ def main() -> None:
                 "prev_odo": state.get("last_odo"),
                 "last_odo": snap.get("odometer"),
                 "trips": len(trips), "drains": len(drains),
-                "last_soc": snap.get("soc")})
+                "last_soc": snap.get("soc"),
+                "last_rivian_sync": state.get("last_rivian_sync")})
     print(f"ok soc={snap.get('soc')} power={snap.get('power_state')} "
           f"trips={len(trips)} drains={len(drains)} charges={len(charges)} "
           f"errand_days={len(errands)}")
@@ -275,7 +311,9 @@ def burst_main(minutes: float = 48, interval: float = 120,
                             "prev_odo": state.get("last_odo"),
                             "last_odo": last_snap.get("odometer"),
                             "trips": len(trips), "drains": len(drains),
-                            "last_soc": last_snap.get("soc")})
+                            "last_soc": last_snap.get("soc"),
+                            "last_rivian_sync":
+                                state.get("last_rivian_sync")})
             except Exception:
                 traceback.print_exc()
         print(f"{tag} polls={polls} trips={len(trips)} drains={len(drains)} "
@@ -332,7 +370,10 @@ def burst_main(minutes: float = 48, interval: float = 120,
             # "Updated" time tracks the latest poll instead of lagging to
             # the burst end. Failures here must never kill the poll loop.
             try:
-                _derive_and_report()
+                if dry_run:
+                    _derive_and_report()
+                else:
+                    _derive_sync_report(load_state(), int(time.time()))
             except Exception:
                 traceback.print_exc()
         except NeedsReauth:
@@ -368,10 +409,24 @@ def burst_main(minutes: float = 48, interval: float = 120,
             traceback.print_exc()
 
 
+def _derive_sync_report(state: dict, now: int):
+    """Derive, sync Rivian sessions, then rebuild the report.
+
+    The sync sits after derive so a DC charge that just ended is already a
+    row and gets priced in the same poll that first records it.
+    """
+    import analyze
+    trips, drains, charges, errands = analyze.derive()
+    sync_rivian_sessions(state, now)
+    import report
+    report.generate()
+    return trips, drains, charges, errands
+
+
 def _derive_and_report():
     """Run analyze.derive() + report.generate().
 
-    Shared by the burst loop (every poll), burst finish, and --derive-only.
+    Shared by the burst dry-run loop, burst finish, and --derive-only.
     """
     import analyze
     trips, drains, charges, errands = analyze.derive()

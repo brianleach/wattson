@@ -21,6 +21,7 @@ Data semantics:
   are not measurable: the car tops itself off while plugged in.
 """
 import base64
+import hashlib
 import html
 import json
 import math
@@ -37,7 +38,7 @@ from config import (HOME_LAT, HOME_LON,
                     VEHICLE_MODEL,
                     REPORT_PATH, TOKENS_PATH, LOCAL_TZ)
 from crypto import unseal
-from db import charge_price_info, connect
+from db import charge_price_info, connect, unmatched_rivian_sessions
 from dashboard_auth import token_from_env
 
 GREEN = "#7ed321"
@@ -51,6 +52,13 @@ HOME_RADIUS_M = 250.0
 GAS_COMPARISON_MPG = float(os.environ.get(
     'WATTSON_GAS_COMPARISON_MPG',
     os.environ.get('RIVIAN_GAS_MPG', '25')))
+MI_PER_KM = 0.621371
+CHARGE_LOG_PAGE = 7
+# New charge maps drawn per generate. The log covers every session, so an
+# upgrade (or a tile outage) would otherwise stitch tiles for all of them
+# inside one poll; the rest fill in on later polls, newest first.
+MAP_RENDERS_PER_GENERATE = 10
+_map_renders_left = MAP_RENDERS_PER_GENERATE
 GAS_PRICE_FALLBACK = float(os.environ.get(
     'WATTSON_GAS_PRICE',
     os.environ.get('RIVIAN_GAS_PRICE', '4.50')))
@@ -955,16 +963,11 @@ def _activity_html(trips: list[dict], errands: list[dict],
     days = _activity_day_data(trips, errands, segs)
     if not days:
         return ("", '<div class="empty">No activity recorded yet.</div>')
-    months: list[tuple[str, str]] = []
+    months: list[str] = []
     for d in days:
-        if not months or months[-1][0] != d["month"]:
-            months.append(
-                (d["month"],
-                 datetime.strptime(d["month"], "%Y-%m").strftime("%B %Y")))
-    opts = ('<option value="latest">Latest</option>' + "".join(
-        f'<option value="{m}">{lbl}</option>' for m, lbl in months))
-    select = (f'<select id="actmonth" class="monthsel" '
-              f'aria-label="Jump to month">{opts}</select>')
+        if not months or months[-1] != d["month"]:
+            months.append(d["month"])
+    select = _month_select("actmonth", months)
     payload = json.dumps({"days": days}, ensure_ascii=False)
     payload = payload.replace("</", "<\\/")
     html = ('<div id="actdays"></div>'
@@ -1195,6 +1198,10 @@ def _point_map_html(lat: float | None, lon: float | None,
     if png_path.exists():
         jpeg_bytes = png_path.read_bytes()
     else:
+        global _map_renders_left
+        if _map_renders_left <= 0:
+            return ""
+        _map_renders_left -= 1
         try:
             jpeg_bytes = _render_point_map(lat, lon)
         except Exception:
@@ -1225,8 +1232,54 @@ def _session_miles(c: dict, eff: float) -> float:
     return float(c.get("kwh_added") or 0) * eff
 
 
-def _charge_row_html(c: dict, scale: float, open_: bool,
-                     eff: float = 3.0) -> str:
+def _backfill_cost(s: dict, eff: float) -> dict | None:
+    """EV cost and miles for a Rivian session Wattson never tracked.
+
+    Home sessions are costed at the home rate on Rivian's kWh; public ones
+    at what Rivian billed. None when neither gives a price.
+    """
+    kwh = s["kwh"] or 0
+    if s["is_home"] or (s["paid_total"] is None and not s["is_public"]):
+        if kwh <= 0:
+            return None
+        ev_cost, is_dc = kwh * HOME_KWH_RATE, False
+    elif s["paid_total"] is not None and s["currency"] == "USD":
+        ev_cost, is_dc = s["paid_total"], True
+    else:
+        return None
+    km = s["range_added_km"] or 0
+    miles = km * MI_PER_KM if km > 0 else kwh * eff
+    return {"kwh": kwh, "ev_cost": ev_cost, "is_dc": is_dc, "miles": miles}
+
+
+def _backfill_row_html(b: dict) -> str:
+    """Charging-log row for a session known only from Rivian's history."""
+    where = ", ".join(x for x in (b["vendor"], b["city"]) if x)
+    if not where:
+        where = "Home" if not b["is_dc"] else "Unknown location"
+    cls = "green" if b["save"] >= 0 else "amber"
+    verb = "saved" if b["save"] >= 0 else "lost"
+    return (
+        f'<details class="chargerow sacc"><summary>'
+        f'<div class="trip-time">{_fmt_ts(b["start_ts"])}'
+        f' <span class="dim">&middot; '
+        f'{(b["end_ts"] - b["start_ts"]) / 60:.0f} min &middot; from Rivian'
+        f'</span><span class="tag">{"DC" if b["is_dc"] else "AC"}</span>'
+        f'</div>'
+        f'<div class="trip-route">{_esc(where)}</div>'
+        f'<div class="trip-stats">'
+        f'<span><b>{b["kwh"]:.1f}</b> kWh</span>'
+        f'<span><b>${b["ev_cost"]:.2f}</b> cost</span>'
+        f'<span><b class="{cls}">${abs(b["save"]):.2f}</b> {verb} '
+        f'<span class="dim">(${b["gas_price"]:.2f}/gal)</span></span>'
+        f'<span><b>{b["miles"]:.0f} mi</b> gained</span>'
+        f'</div></summary>'
+        f'<div class="chargedetail"><div class="cdin"><div class="sub">'
+        f'From your Rivian charging history: Wattson wasn&apos;t tracking '
+        f'the car during this session.</div></div></div></details>')
+
+
+def _charge_row_html(c: dict, scale: float, eff: float = 3.0) -> str:
     """One expandable charging-log row: summary plus detail."""
     ma = (f"{c['miles_added']:.0f} mi"
           if c.get("miles_added") is not None else "-")
@@ -1271,14 +1324,17 @@ def _charge_row_html(c: dict, scale: float, open_: bool,
             _save3 = _gas_c3 - _ev_c3
             _cls3 = "green" if _save3 >= 0 else "amber"
             _verb3 = "saved" if _save3 >= 0 else "lost"
+            # Same shape as home rows: a cost item, then a saved item.
+            cost_bit = ('<span><b>$%.2f</b> '
+                        '<a href="#" onclick="event.stopPropagation();'
+                        'openCostModal(%d, %.2f, %d);return false;" '
+                        'class="cost-edit green tiny">edit</a> cost '
+                        '<span class="dim">($%.2f/kWh)</span></span>'
+                        % (_ev_c3, c["id"], _dc_rate, c["start_ts"],
+                           _dc_rate))
             savings_bit = ('<span><b class="%s">$%.2f</b> %s '
-                           '<span class="dim">($%.2f paid &middot; $%.2f/gal, '
-                           '$%.2f/kWh)</span> '
-                           '<a href="#" onclick="event.stopPropagation();'
-                           'openCostModal(%d, %.2f, %d);return false;" '
-                           'class="cost-action green tiny">edit</a></span>'
-                           % (_cls3, abs(_save3), _verb3, _ev_c3, _gp_val,
-                              _dc_rate, c["id"], _dc_rate, c["start_ts"]))
+                           '<span class="dim">($%.2f/gal)</span></span>'
+                           % (_cls3, abs(_save3), _verb3, _gp_val))
         else:
             savings_bit = ('<span><a href="#" onclick="event.stopPropagation();'
                            'openCostModal(%d, 0, %d);return false;" '
@@ -1287,9 +1343,8 @@ def _charge_row_html(c: dict, scale: float, open_: bool,
     cap = (f'{c["soc_start"]:.0f}% &rarr; {c["soc_end"]:.0f}% &middot; '
            f'{c["avg_kw"] or "-"} kW avg')
     mmap = _point_map_html(c.get("lat"), c.get("lon"), c.get("label") or "", f"charge-{c['start_ts']}")
-    open_attr = " open" if open_ else ""
     return (
-        f'<details class="chargerow sacc"{open_attr}><summary>'
+        f'<details class="chargerow sacc"><summary>'
         f'<div class="trip-time">{_fmt_ts(c["start_ts"])}'
         f' <span class="dim">&middot; {c["minutes"]:.0f} min</span>{tag}</div>'
         f'<div class="trip-route">{_esc(c["label"] or "Unknown location")}</div>'
@@ -1310,7 +1365,25 @@ def _charge_row_html(c: dict, scale: float, open_: bool,
         f'</div></div></details>')
 
 
-def _charges_html(charges: list[dict], live: dict | None = None,
+def _month_select(select_id: str, months: list[str]) -> str:
+    """Latest/month dropdown over YYYY-MM months, newest first."""
+    opts = '<option value="latest">Latest</option>' + "".join(
+        f'<option value="{m}">'
+        f'{datetime.strptime(m, "%Y-%m").strftime("%B %Y")}</option>'
+        for m in months)
+    return (f'<select id="{select_id}" class="monthsel" '
+            f'aria-label="Jump to month">{opts}</select>')
+
+
+def _charge_month_select(starts: list[int]) -> str:
+    """Latest/month dropdown for the charging log, like Daily activity's."""
+    months = sorted({_ldt(ts).strftime("%Y-%m") for ts in starts},
+                    reverse=True)
+    return _month_select("chgmonth", months) if months else ""
+
+
+def _charges_html(charges: list[dict], backfill: list[dict],
+                  live: dict | None = None,
                   live_is_home: bool = False, eff: float = 3.0,
                   orphans=(), ambiguous=()) -> str:
     # The in-progress session is shown in the live card; keep it out of
@@ -1318,29 +1391,58 @@ def _charges_html(charges: list[dict], live: dict | None = None,
     hist = [ch for ch in charges
             if not (live and ch["end_ts"] >= live["session_start"])]
     orphan_bit = _orphan_note_html(charges, orphans, ambiguous)
-    if not hist and not live:
+    if not hist and not backfill and not live:
         return ('<div class="empty">No charging sessions yet.<br>Ping me when '
                 'you plug in and I will track the session.</div>'
                 + orphan_bit)
     parts = []
     if live:
         parts.append(_live_charge_html(live, live_is_home))
-    if hist:
-        scale = max(ch["kwh_added"] for ch in hist) * 1.15 or 1.0
-        rows = "".join(_charge_row_html(c, scale, open_=(i == 0), eff=eff)
-                       for i, c in enumerate(hist))
+    if hist or backfill:
+        scale = max((ch["kwh_added"] for ch in hist), default=0) * 1.15 or 1.0
+        rows = [(c["start_ts"],
+                 "dc" if "dc" in (c.get("charge_type") or "").lower()
+                 else "ac",
+                 _charge_row_html(c, scale, eff=eff))
+                for c in hist]
+        rows += [(b["start_ts"], "dc" if b["is_dc"] else "ac",
+                  _backfill_row_html(b)) for b in backfill]
+        rows.sort(key=lambda r: r[0], reverse=True)
+        # Same paging as Daily activity: the latest CHARGE_LOG_PAGE rows
+        # show, "Show earlier" reveals the next page, and the AC/DC
+        # filter pages through its matches the same way (dashboard.js).
+        # The newest row starts open; rows past the first page start hidden.
+        rows_html = "".join(
+            row.replace("<details ", f'<details data-type="{kind}" '
+                        f'data-month="{_ldt(ts).strftime("%Y-%m")}" '
+                        + ("open " if i == 0 else "")
+                        + ("hidden " if i >= CHARGE_LOG_PAGE else ""), 1)
+            for i, (ts, kind, row) in enumerate(rows))
+        more = ('<button id="chgshowmore" class="showmore">Show earlier'
+                '</button>' if len(rows) > CHARGE_LOG_PAGE else "")
+        kinds = {kind for _, kind, _ in rows}
+        chg_filter = ('<div class="seg" id="chgfilter">'
+                      '<button class="on" data-f="all">All</button>'
+                      '<button data-f="ac">AC</button>'
+                      '<button data-f="dc">DC fast</button></div>'
+                      if kinds == {"ac", "dc"} else "")
+        summary = _charge_month_summary(
+            hist + [{"start_ts": b["start_ts"], "kwh_added": b["kwh"],
+                     "miles_added": b["miles"]} for b in backfill])
         export = ("" if os.environ.get("WATTSON_DEMO") else
                   '<a href="/api/charges.csv" '
                   'class="dim14">Export CSV</a>')
         parts.append(
             f'<div class="card"><h3 class="row"><span>Charging log</span>'
             f'{export}</h3>'
-            f'{_charge_month_summary(hist)}'
-            f'{rows}</div>')
+            f'{summary}{chg_filter}'
+            f'<div id="chglist" data-page="{CHARGE_LOG_PAGE}">{rows_html}'
+            f'</div>{more}</div>')
     footnote = ('<p class="note">Home charging costed at $%.2f/kWh '
-                '(set RIVIAN_HOME_KWH_RATE in .env). Away sessions show no '
-                'cost; public rates vary. Tap "? add cost" on a DC fast '
-                'charge to record what you paid.</p>' % HOME_KWH_RATE)
+                '(set RIVIAN_HOME_KWH_RATE in .env). DC fast-charge costs '
+                'are pulled from your Rivian charging history automatically. '
+                'Tap "? add cost" on a session Rivian doesn\'t price, or to '
+                'override a price.</p>' % HOME_KWH_RATE)
     return "".join(parts) + orphan_bit + footnote
 
 
@@ -1399,6 +1501,14 @@ def _fmt_money(v: float, decimals: int = 0) -> str:
     """$12 / -$12 (never $-12)."""
     s = ("$%d" if decimals == 0 else "$%." + str(decimals) + "f") % abs(v)
     return ("-" if v < 0 else "") + s
+
+
+def _lifetime_miles_sub(odo_mi: float | None, tracked_mi: float) -> str:
+    """Total miles on the odometer, plus the tracked miles efficiency is
+    based on (there's no energy data for miles before tracking began)."""
+    if odo_mi is None:
+        return f"{tracked_mi:.1f} mi tracked"
+    return f"{odo_mi:,.0f} mi total &middot; {tracked_mi:,.0f} tracked"
 
 
 def _gas_subtitle(rows: list[dict], unpriced_dc: int = 0) -> str:
@@ -1595,6 +1705,16 @@ def _asset_text(name: str) -> str:
     return (_STATIC_DIR / name).read_text(encoding="utf-8")
 
 
+def _asset_url(name: str) -> str:
+    """Served URL for a static asset, versioned by its content.
+
+    Cloudflare rewrites nginx's no-cache to a 4-hour browser TTL, so an
+    unversioned URL keeps serving the old file after a deploy.
+    """
+    digest = hashlib.sha256((_STATIC_DIR / name).read_bytes()).hexdigest()
+    return f"/{name}?v={digest[:12]}"
+
+
 def _styles_markup() -> str:
     """Dashboard CSS as it goes into the page: a <link> to
     static/dashboard.css for the served dashboard. Demo builds
@@ -1602,7 +1722,7 @@ def _styles_markup() -> str:
     page."""
     if os.environ.get("WATTSON_DEMO"):
         return "<style>\n" + _asset_text("dashboard.css") + "</style>"
-    return '<link rel="stylesheet" href="/dashboard.css">'
+    return f'<link rel="stylesheet" href="{_asset_url("dashboard.css")}">'
 
 
 def _scripts_markup() -> str:
@@ -1615,10 +1735,12 @@ def _scripts_markup() -> str:
         # explanatory notes instead of calling the API.
         return ("<script>\nwindow.WATTSON_DEMO = true;\n"
                 + _asset_text("dashboard.js") + "</script>")
-    return '<script src="/dashboard.js"></script>'
+    return f'<script src="{_asset_url("dashboard.js")}"></script>'
 
 
 def generate() -> None:
+    global _map_renders_left
+    _map_renders_left = MAP_RENDERS_PER_GENERATE
     try:
         tokens = unseal(TOKENS_PATH.read_bytes())
         vehicle_name = (tokens.get("vehicle_name") or VEHICLE_NAME
@@ -1657,12 +1779,11 @@ def generate() -> None:
             "SELECT * FROM trips ORDER BY start_ts DESC LIMIT 60")]
         errands = [dict(r) for r in con.execute(
             "SELECT * FROM errands ORDER BY day DESC LIMIT 30")]
-        charges = [dict(r) for r in con.execute(
-            "SELECT * FROM charges ORDER BY start_ts DESC LIMIT 20")]
         # Idle-drain events between drives (from analyze.py _drain_from_run)
         drains = [dict(r) for r in con.execute(
             "SELECT * FROM drains ORDER BY sleep_ts")]
-        # All charges for lifetime savings (no LIMIT: the log shows 20).
+        # Every session: lifetime savings, and the charging log pages
+        # through all of them.
         all_charges = [dict(r) for r in con.execute(
             "SELECT * FROM charges ORDER BY start_ts DESC")]
         # Prices resolve once, here, from the annotation table: the
@@ -1671,8 +1792,6 @@ def generate() -> None:
         # through the same helper, so no surface can disagree.
         _prices, _orphans, _ambiguous = charge_price_info(
             con, [c["start_ts"] for c in all_charges])
-        for _c in charges:
-            _c["user_cost_per_kwh"] = _prices.get(_c["start_ts"])
         for _c in all_charges:
             _c["user_cost_per_kwh"] = _prices.get(_c["start_ts"])
         agg = con.execute(
@@ -1707,6 +1826,13 @@ def generate() -> None:
     _savings_total = 0.0
     _unpriced_dc = 0
     _eff = lifetime_mpk if lifetime_mpk else 3.0
+
+    def _gas_on(day: str) -> float:
+        try:
+            return _gp.get_gas_price(day) if _gp else GAS_PRICE_FALLBACK
+        except Exception:
+            return GAS_PRICE_FALLBACK
+
     for ch in all_charges:
         ctype = (ch.get("charge_type") or "").lower()
         is_home = _is_home(ch.get("label"), ch.get("lat"), ch.get("lon")) \
@@ -1725,10 +1851,7 @@ def generate() -> None:
         if kwh <= 0:
             continue
         ch_date = _day(ch["start_ts"])
-        try:
-            gp = _gp.get_gas_price(ch_date) if _gp else GAS_PRICE_FALLBACK
-        except Exception:
-            gp = GAS_PRICE_FALLBACK
+        gp = _gas_on(ch_date)
         ev_cost = kwh * rate
         miles = _session_miles(ch, _eff)
         gas_cost = miles / GAS_COMPARISON_MPG * gp
@@ -1737,14 +1860,37 @@ def generate() -> None:
         _savings_rows.append({
             "date": ch_date, "kwh": kwh, "ev_cost": ev_cost,
             "gas_price": gp, "gas_cost": gas_cost, "save": save,
-            "is_dc": is_dc,
+            "is_dc": is_dc, "ts": ch["start_ts"], "from_rivian": False,
         })
+    # Sessions Wattson never saw (before tracking began, or missed polls)
+    # come from the stored Rivian history, since charges is rebuilt on
+    # every derive.
+    backfill = []
+    for s in unmatched_rivian_sessions():
+        b = _backfill_cost(s, _eff)
+        if b is None:
+            continue
+        b_date = _day(s["start_ts"])
+        gp = _gas_on(b_date)
+        gas_cost = b["miles"] / GAS_COMPARISON_MPG * gp
+        save = gas_cost - b["ev_cost"]
+        _savings_total += save
+        _savings_rows.append({
+            "date": b_date, "kwh": b["kwh"], "ev_cost": b["ev_cost"],
+            "gas_price": gp, "gas_cost": gas_cost, "save": save,
+            "is_dc": b["is_dc"], "ts": s["start_ts"], "from_rivian": True,
+        })
+        backfill.append({**s, **b, "gas_price": gp, "save": save})
+    _savings_rows.sort(key=lambda r: r["ts"], reverse=True)
     if _savings_rows:
         _srows = "".join(
-            "<tr><td>%s</td><td>%s</td><td>%.1f</td><td>$%.2f</td>"
+            "<tr><td>%s</td><td>%s%s</td><td>%.1f</td><td>$%.2f</td>"
             "<td>$%.2f</td><td>$%.2f</td>"
             '<td class="%s">%s</td></tr>' % (
-                r["date"], "DC" if r["is_dc"] else "AC", r["kwh"], r["ev_cost"],
+                r["date"], "DC" if r["is_dc"] else "AC",
+                ' <span class="dim">from Rivian</span>'
+                if r["from_rivian"] else "",
+                r["kwh"], r["ev_cost"],
                 r["gas_price"], r["gas_cost"],
                 "green" if r["save"] >= 0 else "amber",
                 _fmt_money(r["save"], 2))
@@ -2050,8 +2196,11 @@ def generate() -> None:
     live_is_home = bool(live) and _is_home(
         loc, latest.get("lat"), latest.get("lon"))
     charging_section = (
-        '<h2 class="sec" id="charging">Charging</h2>'
-        + _charges_html(charges, live, live_is_home,
+        '<div class="sec-row" id="charging"><h2 class="sec">Charging</h2>'
+        + _charge_month_select([c["start_ts"] for c in all_charges]
+                               + [b["start_ts"] for b in backfill])
+        + '</div>'
+        + _charges_html(all_charges, backfill, live, live_is_home,
                         eff=(lifetime_mpk if lifetime_mpk else 3.0),
                         orphans=_orphans, ambiguous=_ambiguous))
     savings_section = (
@@ -2104,7 +2253,10 @@ def generate() -> None:
         "__GASSAVE__": (_fmt_money(int(round(_savings_total)))
                         if _savings_rows else "-"),
         "__GASSAVESUB__": _gas_subtitle(_savings_rows, _unpriced_dc),
-        "__LIFESUB__": (f"{float(os.environ.get('WATTSON_DEMO_LIFETIME_MI', agg['m'])):.1f} mi tracked" if agg["m"] else ""),
+        "__LIFESUB__": (_lifetime_miles_sub(
+            odo_mi,
+            float(os.environ.get("WATTSON_DEMO_LIFETIME_MI", agg["m"])))
+            if agg["m"] else ""),
         "__TRIPMONTH__": trip_month_html,
         "__TRIPS__": trips_html,
         "__BATTERYNOTE__": batt_note,

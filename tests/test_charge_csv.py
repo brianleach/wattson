@@ -99,9 +99,9 @@ class CsvLinkTests(unittest.TestCase):
         with mock.patch("report._charge_row_html", return_value=""), mock.patch(
                 "report._charge_month_summary", return_value=""):
             with mock.patch.dict(os.environ, {}, clear=True):
-                self.assertIn("/api/charges.csv", report._charges_html(charges))
+                self.assertIn("/api/charges.csv", report._charges_html(charges, []))
             with mock.patch.dict(os.environ, {"WATTSON_DEMO": "1"}):
-                self.assertNotIn("/api/charges.csv", report._charges_html(charges))
+                self.assertNotIn("/api/charges.csv", report._charges_html(charges, []))
 
 
 if __name__ == "__main__":
